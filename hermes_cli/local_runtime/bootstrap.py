@@ -307,6 +307,7 @@ def ensure_local_runtime(config: dict, force: bool = False) -> "object | None":
                 default_tag, ensure_runtime_installed, installed_tags, select_backend)
             from hermes_cli.local_runtime.supervisor import LlamaServerSupervisor
 
+            custom_runtime = str(section.get("runtime_path") or "").strip()
             backend = section.get("backend", "auto")
             if backend == "auto":
                 backend = select_backend(_detect_gpu_vendor())
@@ -316,16 +317,22 @@ def ensure_local_runtime(config: dict, force: bool = False) -> "object | None":
             # the pane, not a boot-path surprise (a multi-minute inline download here is exactly
             # how the onboarding bounce returns).
             tag = section.get("tag") or default_tag()
-            have = installed_tags()
-            if tag not in have:
-                if not have:
-                    logger.info("local runtime enabled but no build installed; "
-                                "install happens in the Local Models pane")
-                    return None
-                logger.info("configured tag %s not installed; serving %s "
-                            "(update is a click in Local Models)", tag, have[0])
-                tag = have[0]
-            install_dir = ensure_runtime_installed(tag, backend)
+            if custom_runtime:
+                install_dir = Path(custom_runtime).expanduser().resolve()
+                # Resolve before constructing the supervisor so a bad selection is reported at boot.
+                binaries.server_binary(install_dir)
+                backend = "custom"
+            else:
+                have = installed_tags()
+                if tag not in have:
+                    if not have:
+                        logger.info("local runtime enabled but no build installed; "
+                                    "install happens in the Local Models pane")
+                        return None
+                    logger.info("configured tag %s not installed; serving %s "
+                                "(update is a click in Local Models)", tag, have[0])
+                    tag = have[0]
+                install_dir = ensure_runtime_installed(tag, backend)
 
             mdir = models_dir()
             mdir.mkdir(parents=True, exist_ok=True)
@@ -334,7 +341,8 @@ def ensure_local_runtime(config: dict, force: bool = False) -> "object | None":
             sup = LlamaServerSupervisor(install_dir, mdir, preset_path=preset_path,
                                         models_max=_admitted_models_max(
                                             mdir, int(section.get("models_max", 4))),
-                                        port=int(section.get("port", 0)) or None)
+                                        port=int(section.get("port", 0)) or None,
+                                        extra_args=[str(arg) for arg in section.get("extra_args") or []])
             try:
                 sup.start()
             except Exception:

@@ -4,9 +4,11 @@ import { useNavigate } from 'react-router'
 
 import { NEW_CHAT_ROUTE } from '@/app/routes'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Tip } from '@/components/ui/tooltip'
 import {
   activateLocalModel,
+  configureLocalRuntime,
   deleteLocalModel,
   downloadBrowsedModel,
   downloadLocalModel,
@@ -14,6 +16,7 @@ import {
   getLocalCatalog,
   getLocalHardware,
   getLocalModelsStatus,
+  getLocalRuntimeCapabilities,
   type HFFileGroup,
   type HFSearchHit,
   listHFRepoFiles,
@@ -48,7 +51,13 @@ import {
   watchLocalRuntimeJobs
 } from '@/store/local-runtime-jobs'
 import { notify, notifyError } from '@/store/notifications'
-import type { LocalCatalogModel, LocalHardware, LocalModelsStatus } from '@/types/hermes'
+import type {
+  LocalCatalogModel,
+  LocalHardware,
+  LocalModelsStatus,
+  LocalRuntimeCapabilities,
+  LocalRuntimeOption
+} from '@/types/hermes'
 
 import { ListRow, Pill, SettingsContent, SettingsSection, SettingsSkeleton } from './primitives'
 import { ActiveProfileNote } from './profile-scope'
@@ -87,6 +96,91 @@ function fitRank(model: LocalCatalogModel): number {
   return 2
 }
 
+type RuntimeSelections = Record<string, boolean | string>
+
+function runtimeOptionFlag(option: LocalRuntimeOption): string {
+  return option.flags.find(flag => flag.startsWith('--')) ?? option.flags[0]
+}
+
+function usableRuntimeOptions(options: LocalRuntimeOption[]): LocalRuntimeOption[] {
+  const seen = new Set<string>()
+  const usable: LocalRuntimeOption[] = []
+
+  for (const option of options) {
+    const flags = option.flags.filter(flag => /^--?[a-zA-Z0-9]/.test(flag))
+
+    if (!flags.length) {
+      continue
+    }
+
+    const cleaned = { ...option, flags }
+    const canonical = runtimeOptionFlag(cleaned)
+
+    if (!seen.has(canonical)) {
+      seen.add(canonical)
+      usable.push(cleaned)
+    }
+  }
+
+  return usable
+}
+
+function decodeRuntimeArgs(args: string[], options: LocalRuntimeOption[]) {
+  const aliases = new Map(options.flatMap(option => option.flags.map(flag => [flag, option] as const)))
+  const selected: RuntimeSelections = {}
+  const unknown: string[] = []
+
+  for (let index = 0; index < args.length; index += 1) {
+    const option = aliases.get(args[index])
+
+    if (!option) {
+      unknown.push(args[index])
+      continue
+    }
+
+    const flag = runtimeOptionFlag(option)
+
+    if (option.value) {
+      selected[flag] = args[index + 1] ?? ''
+      index += 1
+    } else {
+      selected[flag] = true
+    }
+  }
+
+  return { selected, unknown }
+}
+
+function encodeRuntimeArgs(
+  options: LocalRuntimeOption[],
+  selected: RuntimeSelections,
+  unknown: string[]
+): string[] {
+  const args = [...unknown]
+
+  for (const option of options) {
+    const flag = runtimeOptionFlag(option)
+
+    if (!(flag in selected)) {
+      continue
+    }
+
+    if (option.value) {
+      const value = typeof selected[flag] === 'string' ? selected[flag].trim() : ''
+
+      if (!value) {
+        continue
+      }
+
+      args.push(flag, value)
+    } else {
+      args.push(flag)
+    }
+  }
+
+  return args
+}
+
 export function LocalModelsSettings() {
   const { t } = useI18n()
   const copy = t.settings.localModels
@@ -96,9 +190,15 @@ export function LocalModelsSettings() {
   const [catalog, setCatalog] = useState<LocalCatalogModel[] | null>(null)
   const [deleting, setDeleting] = useState<null | string>(null)
   const [serverBusy, setServerBusy] = useState(false)
-  // Quickstart escape hatch: true once the user asks for the full pane
-  // (model list, HF browser) instead of the one-button setup card.
-  const [configure, setConfigure] = useState(() => $localRuntimeInstallStarting.get())
+  // Advanced configuration is the front door: no model or runtime choice is imposed.
+  const [configure, setConfigure] = useState(true)
+  const [runtimeCapabilities, setRuntimeCapabilities] = useState<LocalRuntimeCapabilities | null>(null)
+  const [runtimePathDraft, setRuntimePathDraft] = useState('')
+  const [runtimeSelections, setRuntimeSelections] = useState<RuntimeSelections>({})
+  const [runtimeUnknownArgs, setRuntimeUnknownArgs] = useState<string[]>([])
+  const [runtimeOptionQuery, setRuntimeOptionQuery] = useState('')
+  const [runtimeSaving, setRuntimeSaving] = useState(false)
+  const [runtimeDraftInitialized, setRuntimeDraftInitialized] = useState(false)
   // Jobs live in the app-level store (they must survive this pane
   // unmounting); the pane just renders the slice it cares about.
   const jobs = useStore($localRuntimeJobs)
@@ -110,6 +210,9 @@ export function LocalModelsSettings() {
     void getLocalCatalog()
       .then(data => setCatalog(data.models))
       .catch(() => setCatalog([]))
+    void getLocalRuntimeCapabilities()
+      .then(setRuntimeCapabilities)
+      .catch(() => setRuntimeCapabilities(null))
   }, [])
 
   // Snappy first paint: status + catalog immediately; hardware (may shell out
@@ -122,6 +225,16 @@ export function LocalModelsSettings() {
       .then(setHardware)
       .catch(() => setHardware(null))
   }, [refresh])
+
+  useEffect(() => {
+    if (status && runtimeCapabilities && !runtimeDraftInitialized) {
+      setRuntimeDraftInitialized(true)
+      setRuntimePathDraft(status.runtime_path || '')
+      const decoded = decodeRuntimeArgs(status.runtime_args || [], usableRuntimeOptions(runtimeCapabilities.options))
+      setRuntimeSelections(decoded.selected)
+      setRuntimeUnknownArgs(decoded.unknown)
+    }
+  }, [runtimeCapabilities, runtimeDraftInitialized, status])
 
   // The pane is LIVE while visible: residency changes without user action
   // (boot warm finishing, idle sweep unloading, another surface ejecting),
@@ -233,6 +346,67 @@ export function LocalModelsSettings() {
     }
   }
 
+  async function chooseRuntimeFolder() {
+    try {
+      const paths = await window.hermesDesktop.selectPaths({
+        directories: true,
+        multiple: false,
+        title: 'Choose the folder containing llama-server'
+      })
+
+      if (paths[0]) {
+        setRuntimePathDraft(paths[0])
+        const args = encodeRuntimeArgs(
+          usableRuntimeOptions(runtimeCapabilities?.options ?? []),
+          runtimeSelections,
+          runtimeUnknownArgs
+        )
+        const capabilities = await getLocalRuntimeCapabilities(paths[0])
+        const decoded = decodeRuntimeArgs(args, usableRuntimeOptions(capabilities.options))
+        setRuntimeCapabilities(capabilities)
+        setRuntimeSelections(decoded.selected)
+        setRuntimeUnknownArgs(decoded.unknown)
+      }
+    } catch (err) {
+      notifyError(err, 'Could not choose the runtime folder')
+    }
+  }
+
+  async function saveRuntimeConfiguration() {
+    setRuntimeSaving(true)
+
+    try {
+      const extraArgs = encodeRuntimeArgs(
+        usableRuntimeOptions(runtimeCapabilities?.options ?? []),
+        runtimeSelections,
+        runtimeUnknownArgs
+      )
+      const result = await configureLocalRuntime(runtimePathDraft, extraArgs)
+      setRuntimeCapabilities(result.capabilities)
+      notify({ durationMs: 3_000, kind: 'success', message: 'Runtime configuration saved.', title: copy.title })
+      refresh()
+    } catch (err) {
+      notifyError(err, 'Could not save the runtime configuration')
+    } finally {
+      setRuntimeSaving(false)
+    }
+  }
+
+  function toggleRuntimeOption(option: LocalRuntimeOption, enabled: boolean) {
+    const flag = runtimeOptionFlag(option)
+    setRuntimeSelections(current => {
+      const next = { ...current }
+
+      if (enabled) {
+        next[flag] = option.value ? '' : true
+      } else {
+        delete next[flag]
+      }
+
+      return next
+    })
+  }
+
   async function handleDelete(target: string, rowId: string) {
     if (!window.confirm(copy.deleteConfirm(target))) {
       return
@@ -289,6 +463,15 @@ export function LocalModelsSettings() {
   const lastError = jobs.find(j => j.status === 'error')
 
   const sortedCatalog = [...catalog].sort((a, b) => fitRank(a) - fitRank(b))
+  const detectedRuntimeOptions = usableRuntimeOptions(runtimeCapabilities?.options ?? [])
+  const visibleRuntimeOptions = detectedRuntimeOptions.filter(option => {
+    const haystack = `${option.flags.join(' ')} ${option.value} ${option.description}`.toLowerCase()
+    return haystack.includes(runtimeOptionQuery.trim().toLowerCase())
+  })
+  const runtimeHasIncompleteValues = detectedRuntimeOptions.some(option => {
+    const flag = runtimeOptionFlag(option)
+    return option.value && flag in runtimeSelections && !String(runtimeSelections[flag]).trim()
+  })
 
   // ── Quickstart: the dummy-proof front door ──
   // Until something is servable (runtime + at least one model), the pane
@@ -517,6 +700,134 @@ export function LocalModelsSettings() {
         )}
 
         {lastError?.kind === 'runtime-install' && <p className="text-[0.75rem] text-destructive">{lastError.error}</p>}
+
+        <ListRow
+          action={
+            <div className="flex items-center gap-2">
+              {runtimePathDraft && (
+                <Button onClick={() => setRuntimePathDraft('')} size="sm" variant="ghost">
+                  Use managed
+                </Button>
+              )}
+              <Button onClick={() => void chooseRuntimeFolder()} size="sm" variant="outline">
+                <FolderOpen />
+                Choose folder
+              </Button>
+            </div>
+          }
+          description={runtimePathDraft || 'Hermes-managed llama.cpp runtime'}
+          title="Runtime directory"
+        />
+
+        <ListRow
+          action={
+            <Button
+              disabled={runtimeSaving || runtimeHasIncompleteValues}
+              onClick={() => void saveRuntimeConfiguration()}
+              size="sm"
+            >
+              {runtimeSaving ? <Loader2 className="animate-spin" /> : <Check />}
+              Save
+            </Button>
+          }
+          below={
+            runtimeCapabilities?.executable ? (
+              <div className="mt-2 grid gap-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    aria-label="Search llama.cpp options"
+                    className="pl-8"
+                    onChange={event => setRuntimeOptionQuery(event.target.value)}
+                    placeholder="Search options…"
+                    value={runtimeOptionQuery}
+                  />
+                </div>
+
+                <div className="max-h-80 overflow-auto rounded-md border border-(--ui-border)">
+                  {visibleRuntimeOptions.map(option => {
+                    const flag = runtimeOptionFlag(option)
+                    const enabled = flag in runtimeSelections
+                    const value = typeof runtimeSelections[flag] === 'string' ? runtimeSelections[flag] : ''
+
+                    return (
+                      <label
+                        className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_minmax(8rem,12rem)] items-center gap-2 border-b border-(--ui-border) px-2.5 py-2 last:border-b-0 hover:bg-(--ui-bg-tertiary)"
+                        key={flag}
+                      >
+                        <input
+                          checked={enabled}
+                          className="size-3.5 accent-primary"
+                          onChange={event => toggleRuntimeOption(option, event.target.checked)}
+                          type="checkbox"
+                        />
+                        <span className="min-w-0">
+                          <code className="text-[0.72rem] font-medium text-foreground">{option.flags.join(', ')}</code>
+                          {option.description && (
+                            <span className="mt-0.5 block text-[0.68rem] leading-4 text-muted-foreground">
+                              {option.description}
+                            </span>
+                          )}
+                        </span>
+                        {option.value ? (
+                          <Input
+                            aria-label={`Value for ${flag}`}
+                            disabled={!enabled}
+                            onChange={event =>
+                              setRuntimeSelections(current => ({ ...current, [flag]: event.target.value }))
+                            }
+                            onClick={event => event.stopPropagation()}
+                            placeholder={option.value}
+                            size="sm"
+                            value={value}
+                          />
+                        ) : (
+                          <span className="text-right text-[0.68rem] text-muted-foreground">
+                            {enabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                        )}
+                      </label>
+                    )
+                  })}
+
+                  {visibleRuntimeOptions.length === 0 && (
+                    <p className="px-3 py-5 text-center text-xs text-muted-foreground">No matching option.</p>
+                  )}
+                </div>
+
+                {runtimeUnknownArgs.length > 0 && (
+                  <p className="text-[0.68rem] text-amber-700 dark:text-amber-300">
+                    {runtimeUnknownArgs.length} argument(s) not exposed by this runtime are preserved unchanged.
+                  </p>
+                )}
+                {runtimeHasIncompleteValues && (
+                  <p className="text-[0.68rem] text-destructive">Enter a value for every enabled option.</p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Install a runtime or choose a llama.cpp folder to detect its available controls.
+              </p>
+            )
+          }
+          description="Enable an option, then enter only its value. Controls come directly from llama-server --help."
+          title="llama.cpp options"
+        />
+
+        {runtimeCapabilities?.executable && (
+          <details className="rounded-md border border-(--ui-border) px-3 py-2 text-xs">
+            <summary className="cursor-pointer font-medium">
+              Raw llama-server --help ({detectedRuntimeOptions.length} detected options)
+            </summary>
+            <p className="mt-2 break-all text-muted-foreground">
+              {runtimeCapabilities.executable}
+              {runtimeCapabilities.version ? ` · ${runtimeCapabilities.version}` : ''}
+            </p>
+            <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-(--ui-bg-tertiary) p-2 font-mono text-[0.68rem]">
+              {runtimeCapabilities.help_text}
+            </pre>
+          </details>
+        )}
       </SettingsSection>
 
       {/* ── This machine ── */}
@@ -656,7 +967,7 @@ export function LocalModelsSettings() {
                     </div>
                   ) : dJob ? undefined : (
                     <Button
-                      disabled={!model.fits || anyDownloadRunning || !status.runtime_installed}
+                      disabled={anyDownloadRunning}
                       onClick={() => void handleDownload(model)}
                       size="sm"
                       variant="outline"
@@ -1062,10 +1373,7 @@ function BrowseSection({ onChanged }: { onChanged: () => void }) {
 
                     return (
                       <div
-                        className={cn(
-                          'flex flex-col gap-1 rounded-md border border-(--ui-border) px-2.5 py-1.5',
-                          group.fit === 'too-big' && 'opacity-45'
-                        )}
+                        className="flex flex-col gap-1 rounded-md border border-(--ui-border) px-2.5 py-1.5"
                         key={group.label}
                       >
                         <span className="flex w-full items-center justify-between gap-2">
@@ -1077,7 +1385,7 @@ function BrowseSection({ onChanged }: { onChanged: () => void }) {
                           <Button
                             aria-label={copy.browseDownloadAria.replace('{name}', group.label)}
                             className="h-6 shrink-0 px-2"
-                            disabled={group.fit === 'too-big' || Boolean(dJob)}
+                            disabled={Boolean(dJob)}
                             onClick={() => startBrowsedDownload(hit.repo, group)}
                             size="sm"
                             variant="ghost"

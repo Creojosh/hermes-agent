@@ -100,9 +100,13 @@ def preset_for_model(gguf: Path, budget: HardwareBudget,
                                          if requested_window is None else requested_window))
     decision = plan.decision
     if isinstance(decision, PhysicsRefusal):
-        return PresetEntry(model_id=model_id, window=0, spilled=False, refusal=decision.message)
+        # Capacity estimates are guidance, not an admission gate. Keeping a minimal preset makes
+        # every staged GGUF addressable by the router; llama.cpp remains the final authority and
+        # may load, spill, or report an allocation error for the user's chosen parameters.
+        return PresetEntry(model_id=model_id, window=0, spilled=False,
+                           refusal=decision.message, keys={"model": str(gguf)})
 
-    # Router discovery is preset-only: refused files must never autoload with stock fit.
+    # Router discovery is preset-only: every staged model needs an explicit section.
     keys = _args_to_keys(launch_args(
         profile, decision, mtp_capable=is_mtp, uma=budget.uma, mtp_prefill=plan.mtp_prefill,
         mtp_draft_depth=entry.mtp_draft_depth if entry is not None else 3))
@@ -191,8 +195,10 @@ def admitted_residency_count(models_dir: Path, budget: HardwareBudget, configure
 
 def generate_presets(models_dir: Path, budget: HardwareBudget, preset_path: Path,
                      mtp_capable: set[str] | None = None) -> list[PresetEntry]:
-    """Walk the staged models, run the launch decision per model, and write one INI. Refused
-    models get no section (the picker surfaces the refusal from the returned entries)."""
+    """Walk the staged models, run the launch decision per model, and write one INI.
+
+    Capacity refusals remain visible as warnings but still receive a minimal launch section.
+    """
     from hermes_cli.local_runtime.bootstrap import staged_in
 
     entries: list[PresetEntry] = []

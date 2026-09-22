@@ -1,4 +1,4 @@
-"""The router must serve only admitted presets, retaining refusal and spill facts on read-back."""
+"""The router keeps capacity guidance without hiding models the user chose to stage."""
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +21,7 @@ def test_preset_roundtrip_keeps_refusals_and_dense_spill(tmp_path, monkeypatch):
     reread = presets.read_preset_decisions(ini)
     assert set(reread) == {p.model_id for p in generated}
     assert reread["refused"].refusal
+    assert reread["refused"].keys["model"] == str(mdir / "refused.gguf")
     assert reread["allowed"].spilled
     assert reread["allowed"].keys["model"] == str(mdir / "allowed.gguf")
     assert "override-tensor" not in reread["allowed"].keys  # Dense spill has no tensor-pattern override.

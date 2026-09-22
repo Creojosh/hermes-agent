@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from starlette.concurrency import run_in_threadpool
 
@@ -56,6 +56,11 @@ _SERVER_START_FAILED = "The local server could not start — check the runtime i
 
 class RuntimeInstallBody(BaseModel):
     backend: Optional[str] = None   # None/auto -> detect
+
+
+class RuntimeConfigureBody(BaseModel):
+    path: str = ""                # empty -> Hermes-managed runtime
+    extra_args: list[str] = Field(default_factory=list)  # argv items, passed verbatim
 
 
 class ModelDownloadBody(BaseModel):
@@ -453,6 +458,82 @@ def _installed_backend(tag: str) -> str | None:
     return next((d.name for d in dirs if _quiet(lambda: binaries.server_binary(d), None) is not None), None)
 
 
+def _custom_runtime_dir(section: dict) -> Path | None:
+    raw = str(section.get("runtime_path") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def _runtime_executable(section: dict) -> Path | None:
+    custom = _custom_runtime_dir(section)
+    if custom is not None:
+        return _quiet(lambda: binaries.server_binary(custom), None)
+    configured_tag = section.get("tag") or binaries.default_tag()
+    have = binaries.installed_tags()
+    tag = configured_tag if configured_tag in have else (have[0] if have else configured_tag)
+    installed = _installed_backend(tag)
+    if installed is None:
+        return None
+    return _quiet(lambda: binaries.server_binary(binaries.runtimes_root() / tag / installed), None)
+
+
+_HELP_FLAG_RE = re.compile(r"-{1,2}[A-Za-z0-9][\w-]*")
+
+
+def _parse_help_option(line: str) -> Dict[str, Any] | None:
+    """Parse one llama.cpp help row without mistaking section rulers for flags."""
+    cursor = len(line) - len(line.lstrip())
+    flags: list[str] = []
+    while True:
+        match = _HELP_FLAG_RE.match(line, cursor)
+        if match is None:
+            break
+        flags.append(match.group(0))
+        cursor = match.end()
+        separator = re.match(r"[\s,]+", line[cursor:])
+        if separator is None:
+            break
+        next_cursor = cursor + separator.end()
+        if _HELP_FLAG_RE.match(line, next_cursor) is None:
+            break
+        cursor = next_cursor
+    if not flags:
+        return None
+
+    tail = line[cursor:]
+    value = ""
+    description = tail.strip()
+    value_and_description = re.match(r"^\s+(\S+)\s{2,}(.*)$", tail)
+    if value_and_description is not None:
+        value, description = value_and_description.groups()
+    elif description and re.fullmatch(r"(?:[A-Z][A-Z0-9_-]*|<[^>]+>|\[[^]]+\])", description):
+        value, description = description, ""
+    return {"flags": flags, "value": value, "description": description.strip()}
+
+
+def _runtime_capabilities(section: dict) -> Dict[str, Any]:
+    """Return the selected binary's complete help plus a searchable option index."""
+    exe = _runtime_executable(section)
+    if exe is None:
+        return {"executable": None, "version": "", "help_text": "", "options": []}
+    version_run = subprocess.run([str(exe), "--version"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=15, cwd=str(exe.parent))
+    help_run = subprocess.run([str(exe), "--help"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=30, cwd=str(exe.parent))
+    help_text = (help_run.stdout + help_run.stderr).strip()
+    options = []
+    for line in help_text.splitlines():
+        option = _parse_help_option(line)
+        if option is not None:
+            options.append(option)
+    return {
+        "executable": str(exe),
+        "version": (version_run.stdout + version_run.stderr).strip().splitlines()[0] if
+        (version_run.stdout + version_run.stderr).strip() else "",
+        "help_text": help_text,
+        "options": options,
+    }
+
+
 def _staged_row(gguf: Path) -> Dict[str, Any]:
     model_id = _model_id_for(gguf)
     # Split models: report the whole variant's bytes, not one part's.
@@ -482,7 +563,11 @@ def local_models_status():
     have = binaries.installed_tags()
     # The tag actually serving (boot ladder: configured if installed, else newest installed).
     tag = configured_tag if configured_tag in have else (have[0] if have else configured_tag)
-    runtime_backend = _installed_backend(tag)
+    custom_dir = _custom_runtime_dir(section)
+    runtime_backend = (
+        "custom" if custom_dir is not None and _runtime_executable(section) is not None
+        else _installed_backend(tag)
+    )
     mdir = bootstrap.models_dir()
     running = _state_endpoint()
     # Resident models from the live router ({} when down): Loaded pills + eject. A failed read is never
@@ -493,8 +578,11 @@ def local_models_status():
         "enabled": bool(section.get("enabled")), "tag": tag, "configured_tag": configured_tag,
         # Update pending = engine in use (enabled + something installed) and the configured tag
         # (pinned or release default) isn't on disk. The download is a button click, never automatic.
-        "update_available": bool(section.get("enabled") and have and configured_tag not in have),
+        "update_available": bool(
+            custom_dir is None and section.get("enabled") and have and configured_tag not in have),
         "runtime_installed": runtime_backend is not None, "runtime_backend": runtime_backend,
+        "runtime_path": str(custom_dir) if custom_dir is not None else "",
+        "runtime_args": [str(arg) for arg in section.get("extra_args") or []],
         "server_running": running is not None, "server_base_url": (running or {}).get("base_url"),
         "active_model_id": _active_llamacpp_model_id(), "loaded_models": loaded,
         # Live load progress per model (SSE-fed): {model_id: {stage, value, percent}}.
@@ -586,6 +674,8 @@ def _catalog_row(entry, budget, recommended, recommended_reason, staged_ids) -> 
         smallest_total = entry.download_bytes(smallest)
         row.update({
             "fits": False, "size_bytes": smallest_total, "size_label": _human_gb(smallest_total),
+            "model_id": smallest.model_id, "quant": smallest.quant,
+            "quant_validated": smallest.validated, "variant_count": len(entry.variants),
             "fit_summary": "Needs more memory than this machine has",
             "fit_detail": (f"even the most compact build ({smallest.quant}, {_human_gb(smallest_total)}) "
                            "exceeds GPU + system memory"),
@@ -705,6 +795,44 @@ async def local_models_runtime_install(body: RuntimeInstallBody, profile: Option
     return {"job_id": job["job_id"], "backend": backend, "tag": tag}
 
 
+@router.get("/api/local-models/runtime/options")
+async def local_models_runtime_options(path: Optional[str] = None):
+    section = dict(_runtime_section())
+    if path is not None:
+        candidate = Path(path).expanduser().resolve()
+        with _http_error(400, "Invalid llama.cpp runtime folder: "):
+            binaries.server_binary(candidate)
+        section["runtime_path"] = str(candidate)
+    return await run_in_threadpool(_runtime_capabilities, section)
+
+
+@router.post("/api/local-models/runtime/configure")
+async def local_models_runtime_configure(body: RuntimeConfigureBody, profile: Optional[str] = None):
+    path = body.path.strip()
+    if path:
+        candidate = Path(path).expanduser().resolve()
+        with _http_error(400, "Invalid llama.cpp runtime folder: "):
+            binaries.server_binary(candidate)
+            capabilities = await run_in_threadpool(_runtime_capabilities, {"runtime_path": str(candidate)})
+    else:
+        candidate = None
+        capabilities = None
+
+    with _config_profile_scope(profile):
+        with _CONFIG_MUTATION_LOCK:
+            config = config_mod.load_config()
+            section = config.setdefault("local_runtime", {})
+            section["runtime_path"] = str(candidate) if candidate is not None else ""
+            section["extra_args"] = [str(arg) for arg in body.extra_args]
+            config_mod.save_config(config)
+        if bootstrap.get_supervisor() is not None:
+            bootstrap.shutdown_local_runtime()
+            bootstrap.ensure_local_runtime(config, force=True)
+        if capabilities is None:
+            capabilities = await run_in_threadpool(_runtime_capabilities, dict(section))
+    return {"ok": True, "capabilities": capabilities}
+
+
 # ── model download (job with byte progress) ──────────────────
 def _download_target(model_id: str):
     """(entry, variant) for a family id (this machine's selected variant — the same planning budget as the
@@ -712,12 +840,9 @@ def _download_target(model_id: str):
     entry = catalog.catalog_by_id().get(model_id)
     if entry is None:  # exact variant id, or nothing we know (404)
         return catalog.find_entry_for_model(model_id) or _entry_or_404(model_id)
-    if _engine_too_old(entry.min_engine):
-        raise HTTPException(status_code=409, detail=(
-            f"{entry.display_name} needs llama.cpp {entry.min_engine} or newer — update the engine first"))
     choice = catalog.select_variant(entry, hardware.probe_budget(planning=True))
     if choice is None:
-        raise HTTPException(status_code=409, detail=f"no variant of {entry.id} fits this machine")
+        return entry, min(entry.variants, key=lambda variant: variant.size_bytes)
     return entry, choice.variant
 
 

@@ -11,6 +11,7 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -204,6 +205,19 @@ def test_catalog_never_hides_unaffordable_models(client, monkeypatch):
         assert row["fit_detail"] or row["fit_summary"]
 
 
+def test_unaffordable_catalog_model_still_has_download_target(client, monkeypatch):
+    """Memory sizing is advice: the smallest build remains downloadable."""
+    from hermes_cli.local_runtime.catalog import CATALOG
+    from hermes_cli.local_runtime.estimator import HardwareBudget
+
+    tiny = HardwareBudget(usable_vram_bytes=1, total_device_bytes=1, ram_available_bytes=1)
+    monkeypatch.setattr("hermes_cli.local_runtime.hardware.probe_budget", lambda **kw: tiny)
+    data = client.get("/api/local-models/catalog").json()
+    row = next(model for model in data["models"] if model["id"] == CATALOG[0].id)
+    assert row["fits"] is False
+    assert row["model_id"] == min(CATALOG[0].variants, key=lambda variant: variant.size_bytes).model_id
+
+
 # ── downloads ────────────────────────────────────────────────
 
 
@@ -295,6 +309,32 @@ def test_delete_model(client):
 
 
 # ── runtime install ──────────────────────────────────────────
+
+
+def test_custom_runtime_folder_is_saved_and_probed(client, tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "llama-custom"
+    runtime_dir.mkdir()
+    (runtime_dir / ("llama-server.exe" if os.name == "nt" else "llama-server")).touch()
+
+    def fake_run(command, **kwargs):
+        output = (
+            "llama.cpp custom\n" if "--version" in command
+            else "----- common params -----\n  -c,  --ctx-size N  context size\n"
+            "  --flash-attn [on|off|auto]  flash attention\n"
+        )
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr("hermes_cli.web_routers.local_models.subprocess.run", fake_run)
+    response = client.post("/api/local-models/runtime/configure", json={
+        "path": str(runtime_dir), "extra_args": ["--ctx-size", "32768"],
+    })
+    assert response.status_code == 200
+    options = response.json()["capabilities"]["options"]
+    assert options[0] == {"flags": ["-c", "--ctx-size"], "value": "N", "description": "context size"}
+    assert all(option["flags"] != ["-----"] for option in options)
+    status = client.get("/api/local-models/status").json()
+    assert status["runtime_backend"] == "custom"
+    assert status["runtime_args"] == ["--ctx-size", "32768"]
 
 
 def test_runtime_install_rejects_impossible_combo(client, monkeypatch):

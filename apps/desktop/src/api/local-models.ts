@@ -1,4 +1,10 @@
-import type { LocalCatalogModel, LocalHardware, LocalModelsStatus, LocalRuntimeJob } from '@/types/hermes'
+import type {
+  LocalCatalogModel,
+  LocalHardware,
+  LocalModelsStatus,
+  LocalRuntimeCapabilities,
+  LocalRuntimeJob
+} from '@/types/hermes'
 
 import { hermesApi, profileScoped } from './client'
 
@@ -32,6 +38,25 @@ export function installLocalRuntime(backend?: string): Promise<{ backend: string
     body: { backend: backend ?? null },
     method: 'POST',
     path: '/api/local-models/runtime/install'
+  })
+}
+
+export function getLocalRuntimeCapabilities(path?: string): Promise<LocalRuntimeCapabilities> {
+  return hermesApi<LocalRuntimeCapabilities>({
+    ...profileScoped(),
+    path: `/api/local-models/runtime/options${path === undefined ? '' : `?path=${encodeURIComponent(path)}`}`
+  })
+}
+
+export function configureLocalRuntime(
+  path: string,
+  extraArgs: string[]
+): Promise<{ ok: boolean; capabilities: LocalRuntimeCapabilities }> {
+  return hermesApi<{ ok: boolean; capabilities: LocalRuntimeCapabilities }>({
+    ...profileScoped(),
+    body: { extra_args: extraArgs, path },
+    method: 'POST',
+    path: '/api/local-models/runtime/configure'
   })
 }
 

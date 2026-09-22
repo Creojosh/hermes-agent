@@ -12,6 +12,7 @@ import { LocalModelsSettings } from './local-models-settings'
 // payloads, not transport.
 vi.mock('@/hermes', () => ({
   activateLocalModel: vi.fn(),
+  configureLocalRuntime: vi.fn(),
   deleteLocalModel: vi.fn(),
   downloadBrowsedModel: vi.fn(),
   downloadLocalModel: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('@/hermes', () => ({
   getLocalHardware: vi.fn(),
   getLocalModelsJobs: vi.fn(),
   getLocalModelsStatus: vi.fn(),
+  getLocalRuntimeCapabilities: vi.fn(),
   getLocalRuntimeJob: vi.fn(),
   // The page imports the profile store (settings-scope chip), whose module
   // body subscribes $activeGatewayProfile → setApiRequestProfile at load.
@@ -43,6 +45,8 @@ const BASE_STATUS: LocalModelsStatus = {
   update_available: false,
   runtime_installed: false,
   runtime_backend: null,
+  runtime_path: '',
+  runtime_args: [],
   server_running: false,
   server_base_url: null,
   active_model_id: null,
@@ -129,14 +133,9 @@ function renderPane() {
   )
 }
 
-// The fresh-machine states these tests exercise now lead with the
-// quickstart card; the full pane (runtime rows, model list, browser)
-// is one 'Let me choose' click away. Render and click through.
 async function renderFullPane() {
   const result = renderPane()
-  const configure = await screen.findByRole('button', { name: /let me choose/i })
-
-  fireEvent.click(configure)
+  await screen.findByText('Runtime directory')
 
   return result
 }
@@ -146,6 +145,7 @@ beforeEach(() => {
   mocked.getLocalHardware.mockResolvedValue(BASE_HARDWARE)
   mocked.getLocalCatalog.mockResolvedValue({ models: [FITTING_MODEL, SPILLED_MODEL, REFUSED_MODEL] })
   mocked.getLocalModelsJobs.mockResolvedValue({ jobs: [] })
+  mocked.getLocalRuntimeCapabilities.mockResolvedValue({ executable: null, help_text: '', options: [], version: '' })
   $localRuntimeJobs.set([])
 })
 
@@ -260,6 +260,38 @@ describe('LocalModelsSettings', () => {
     expect(screen.getByRole('button', { name: /install runtime/i })).toBeTruthy()
   })
 
+  it('builds runtime arguments from detected controls without typing flag names', async () => {
+    mocked.getLocalRuntimeCapabilities.mockResolvedValue({
+      executable: 'C:/llama/llama-server.exe',
+      help_text: '--ctx-size N\n--flash-attn BOOL',
+      options: [
+        { description: 'common params', flags: ['-----'], value: '' },
+        { description: 'context size', flags: ['-c', '--ctx-size'], value: 'N' },
+        { description: 'flash attention', flags: ['--flash-attn'], value: 'BOOL' }
+      ],
+      version: 'llama.cpp custom'
+    })
+    mocked.configureLocalRuntime.mockResolvedValue({
+      capabilities: await mocked.getLocalRuntimeCapabilities(),
+      ok: true
+    })
+    await renderFullPane()
+
+    const search = screen.getByRole('textbox', { name: 'Search llama.cpp options' })
+    fireEvent.change(search, { target: { value: 'not-an-option' } })
+    expect(screen.getByText('No matching option.')).toBeTruthy()
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    fireEvent.change(search, { target: { value: 'ctx' } })
+
+    fireEvent.click(screen.getAllByRole('checkbox')[0])
+    fireEvent.change(screen.getByRole('textbox', { name: 'Value for --ctx-size' }), {
+      target: { value: '32768' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(mocked.configureLocalRuntime).toHaveBeenCalledWith('', ['--ctx-size', '32768']))
+  })
+
   it('shows every catalog model with fit pills; unaffordable ones stay visible with the reason', async () => {
     await renderFullPane()
 
@@ -281,11 +313,9 @@ describe('LocalModelsSettings', () => {
     expect(screen.getAllByText('Up to 256K context').length).toBe(2)
     expect(screen.queryByText(/Starts at/)).toBeNull()
 
-    // Its download button is disabled; the fitting model's is enabled once
-    // the runtime exists (here runtime_installed=false, so both disabled —
-    // asserted separately below).
+    // Capacity estimates and runtime installation are guidance, not download gates.
     const buttons = screen.getAllByRole('button', { name: /download · 17\.6 GB/i })
-    expect(buttons.every(b => (b as HTMLButtonElement).disabled)).toBe(true)
+    expect(buttons.every(b => !(b as HTMLButtonElement).disabled)).toBe(true)
   })
 
   it('orders the catalog by fit: resident first, then spilled, then too-big', async () => {
@@ -470,26 +500,12 @@ describe('LocalModelsSettings', () => {
 })
 
 describe('quickstart', () => {
-  it('leads with one button on a fresh machine and fires the quickstart job', async () => {
-    mocked.quickstartLocalModels.mockResolvedValue({
-      display_name: 'Qwen3.6 27B',
-      download_bytes: FITTING_MODEL.size_bytes,
-      job_id: 'q1',
-      model_id: 'qwen3.6-27b',
-      needs_download: true,
-      needs_runtime: true
-    })
+  it('opens the complete configuration directly on a fresh machine', async () => {
     renderPane()
 
-    // The card names the recommended model and the one-click action; the
-    // runtime/model machinery is NOT on screen.
-    expect(await screen.findByRole('button', { name: /set up for me/i })).toBeTruthy()
-    expect(screen.queryByText('Install the local runtime')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /set up for me/i }))
-    await waitFor(() => {
-      expect(mocked.quickstartLocalModels).toHaveBeenCalled()
-    })
+    expect(await screen.findByText('Runtime directory')).toBeTruthy()
+    expect(screen.getByText('Install the local runtime')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /set up for me/i })).toBeNull()
   })
 
   it('pins the quickstart progress view while the job runs', async () => {
@@ -596,9 +612,6 @@ describe('BrowseSection', () => {
       await act(async () => {
         await vi.runOnlyPendingTimersAsync()
       })
-      // Fresh machine leads with the quickstart card — enter the full pane.
-      fireEvent.click(screen.getByRole('button', { name: /let me choose/i }))
-
       const box = screen.getByPlaceholderText(/search models/i)
       fireEvent.change(box, { target: { value: 'qwen' } })
       // Debounce: no call until the pause elapses.
@@ -614,11 +627,10 @@ describe('BrowseSection', () => {
         await vi.runOnlyPendingTimersAsync()
       })
       expect(screen.getByText('Q4_K_M')).toBeTruthy()
-      // Each tile has an explicit download button; the too-big quant's is
-      // disabled, the fitting one is live and starts the download.
+      // Capacity is advisory: both files remain downloadable.
       const q4Btn = screen.getByRole('button', { name: 'Download Q4_K_M' })
       const f16Btn = screen.getByRole('button', { name: 'Download F16' })
-      expect((f16Btn as HTMLButtonElement).disabled).toBe(true)
+      expect((f16Btn as HTMLButtonElement).disabled).toBe(false)
       expect((q4Btn as HTMLButtonElement).disabled).toBe(false)
 
       vi.mocked(hermes.downloadBrowsedModel).mockResolvedValue({ job_id: 'j1', model_id: 'Qwen3.8-27B-Q4_K_M' })

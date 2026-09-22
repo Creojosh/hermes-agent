@@ -1355,6 +1355,8 @@ export interface LocalModelsStatus {
   update_available: boolean
   runtime_installed: boolean
   runtime_backend: string | null
+  runtime_path: string
+  runtime_args: string[]
   server_running: boolean
   server_base_url: string | null
   active_model_id: string | null
@@ -1364,6 +1366,19 @@ export interface LocalModelsStatus {
   placement?: Record<string, LocalModelPlacement>
   models: { id: string; size_bytes: number; size_label: string }[]
   models_dir: string
+}
+
+export interface LocalRuntimeOption {
+  flags: string[]
+  value: string
+  description: string
+}
+
+export interface LocalRuntimeCapabilities {
+  executable: string | null
+  version: string
+  help_text: string
+  options: LocalRuntimeOption[]
 }
 
 export interface LocalHardware {
