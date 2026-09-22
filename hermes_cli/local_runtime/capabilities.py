@@ -59,23 +59,21 @@ def managed_model_supports_vision(model_id: str) -> "bool | None":
         return None
 
     with suppress(Exception):
-        from hermes_cli.local_runtime.bootstrap import assets_dir, staged_model_ids
-        from hermes_cli.local_runtime.catalog import entry_for_model
+        from hermes_cli.local_runtime.bootstrap import (
+            model_vision_enabled, staged_model_path, vision_projector_for)
 
         # Only answer for models actually staged with us.
-        if model_id not in staged_model_ids():
+        model_path = staged_model_path(model_id)
+        if model_path is None:
             return None
+        if not model_vision_enabled(model_id):
+            return False
         live = _props_modalities(model_id)
         if live is not None:
             return live
-        # Staged but not loaded (or an older server build): the catalog knows whether this model
-        # ships a vision projector. Capability requires the projector to actually be on disk — a
-        # model downloaded before its mmproj (partial delete, old layout) genuinely cannot see.
-        entry = entry_for_model(model_id)
-        if entry is None:
-            return None
-        return (entry.mmproj is not None
-                and (assets_dir() / entry.mmproj.local_name).exists())
+        # Staged but not loaded (or an older server build): answer from the actual paired projector,
+        # including user-selected nested libraries the curated catalog has never heard of.
+        return vision_projector_for(model_path) is not None
     return None
 
 

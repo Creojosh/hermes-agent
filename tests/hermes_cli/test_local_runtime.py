@@ -960,6 +960,40 @@ def test_bootstrap_failure_never_raises(tmp_path, monkeypatch):
     assert result is None  # no exception escaped
 
 
+def test_bootstrap_starts_from_custom_runtime_directory(tmp_path, monkeypatch):
+    """A validated custom llama.cpp directory reaches the supervisor instead of
+    failing on the managed-runtime import path."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    from hermes_cli.local_runtime import bootstrap, endpoint, supervisor
+
+    runtime = tmp_path / "custom-runtime"
+    runtime.mkdir()
+    (runtime / "llama-server").touch()
+    (runtime / "llama-server.exe").touch()
+    monkeypatch.setattr(bootstrap, "_SUPERVISOR", None)
+    monkeypatch.setattr(bootstrap, "_generate_presets", lambda *args: None)
+    monkeypatch.setattr(bootstrap, "_start_idle_sweeper", lambda _supervisor: None)
+    monkeypatch.setattr(endpoint, "_state_endpoint", lambda: None)
+
+    captured = {}
+
+    class FakeSupervisor:
+        def __init__(self, install_dir, models_dir, **kwargs):
+            captured["install_dir"] = install_dir
+            self.base_url = "http://127.0.0.1:1/v1"
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(supervisor, "LlamaServerSupervisor", FakeSupervisor)
+
+    result = bootstrap.ensure_local_runtime(
+        {"local_runtime": {"runtime_path": str(runtime)}}, force=True)
+
+    assert result is not None
+    assert captured["install_dir"] == runtime.resolve()
+
+
 def test_ensure_local_runtime_serializes_racing_callers(tmp_path, monkeypatch):
     """Cross-process boot race (#116682): two backends starting in the same second must not
     both spawn a router on the stable port. Neither caller here ever sees the other's

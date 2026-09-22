@@ -1364,8 +1364,15 @@ export interface LocalModelsStatus {
   /** Models loading into memory right now: real per-tensor load percent. */
   loading?: Record<string, LocalModelLoadProgress>
   placement?: Record<string, LocalModelPlacement>
-  models: { id: string; size_bytes: number; size_label: string }[]
+  models: {
+    id: string
+    size_bytes: number
+    size_label: string
+    vision_available?: boolean
+    vision_enabled?: boolean
+  }[]
   models_dir: string
+  models_dir_custom?: boolean
 }
 
 export interface LocalRuntimeOption {

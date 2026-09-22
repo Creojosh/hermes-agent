@@ -44,6 +44,26 @@ def test_models_and_runtimes_resolve_to_the_shared_root(profile_home):
     assert "profiles" not in runtimes.parts
 
 
+def test_custom_models_directory_stays_shared_across_profile_switches(profile_home, tmp_path):
+    root, first_profile = profile_home
+    second_profile = root / "profiles" / "writer"
+    second_profile.mkdir(parents=True)
+    library = tmp_path / "shared-model-library"
+    library.mkdir()
+
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from hermes_cli.local_runtime import bootstrap
+
+    bootstrap.set_models_dir(str(library))
+
+    for profile in (first_profile, second_profile, first_profile):
+        token = set_hermes_home_override(profile)
+        try:
+            assert bootstrap.models_dir() == library.resolve()
+        finally:
+            reset_hermes_home_override(token)
+
+
 def test_all_runtime_state_follows_runtimes_root(profile_home):
     """Presets, window overrides, server state, and the api key all live
     under runtimes_root() — one resolver, so profile-scoping bugs cannot

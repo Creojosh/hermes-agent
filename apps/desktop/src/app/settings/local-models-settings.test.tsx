@@ -12,6 +12,7 @@ import { LocalModelsSettings } from './local-models-settings'
 // payloads, not transport.
 vi.mock('@/hermes', () => ({
   activateLocalModel: vi.fn(),
+  configureLocalModelsDirectory: vi.fn(),
   configureLocalRuntime: vi.fn(),
   deleteLocalModel: vi.fn(),
   downloadBrowsedModel: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('@/hermes', () => ({
   quickstartLocalModels: vi.fn(),
   searchHFModels: vi.fn(),
   setApiRequestProfile: vi.fn(),
+  setLocalModelVision: vi.fn(),
   sideloadLocalModel: vi.fn()
 }))
 
@@ -52,7 +54,8 @@ const BASE_STATUS: LocalModelsStatus = {
   active_model_id: null,
   loaded_models: {},
   models: [],
-  models_dir: 'C:/somewhere/models'
+  models_dir: 'C:/somewhere/models',
+  models_dir_custom: false
 }
 
 const BASE_HARDWARE: LocalHardware = {
@@ -158,6 +161,58 @@ afterEach(() => {
 })
 
 describe('LocalModelsSettings', () => {
+  it('chooses a shared model folder and asks the backend to scan it', async () => {
+    const originalDesktop = window.hermesDesktop
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { ...originalDesktop, selectPaths: vi.fn().mockResolvedValue(['D:/models']) }
+    })
+    mocked.configureLocalModelsDirectory.mockResolvedValue({
+      detected_models: 2,
+      models_dir: 'D:/models',
+      models_dir_custom: true,
+      ok: true
+    })
+
+    try {
+      await renderFullPane()
+      expect(screen.getByText(/C:\/somewhere\/models/)).toBeTruthy()
+      const folderButtons = screen.getAllByRole('button', { name: /^choose folder$/i })
+      fireEvent.click(folderButtons[folderButtons.length - 1])
+      await waitFor(() => expect(mocked.configureLocalModelsDirectory).toHaveBeenCalledWith('D:/models'))
+    } finally {
+      Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: originalDesktop })
+    }
+  })
+
+  it('shows only detected models in a custom library and toggles an adjacent vision projector', async () => {
+    mocked.getLocalModelsStatus.mockResolvedValue({
+      ...BASE_STATUS,
+      models_dir: 'D:/models',
+      models_dir_custom: true,
+      models: [
+        {
+          id: 'Own-Model-Q4',
+          size_bytes: 4 * 2 ** 30,
+          size_label: '4.0 GB',
+          vision_available: true,
+          vision_enabled: true
+        }
+      ]
+    })
+    mocked.setLocalModelVision.mockResolvedValue({ enabled: false, ok: true })
+
+    await renderFullPane()
+
+    expect(screen.getByText('Own-Model-Q4')).toBeTruthy()
+    expect(screen.queryByText('Recommended')).toBeNull()
+    expect(screen.queryByRole('button', { name: /download ·/i })).toBeNull()
+    const vision = screen.getByRole('checkbox', { name: /vision own-model-q4/i })
+    expect((vision as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(vision)
+    await waitFor(() => expect(mocked.setLocalModelVision).toHaveBeenCalledWith('Own-Model-Q4', false))
+  })
+
   it.each(['starting', 'running'])(
     'keeps the runtime update view visible with no staged models while %s',
     async phase => {

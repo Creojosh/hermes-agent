@@ -27,6 +27,31 @@ def test_preset_roundtrip_keeps_refusals_and_dense_spill(tmp_path, monkeypatch):
     assert "override-tensor" not in reread["allowed"].keys  # Dense spill has no tensor-pattern override.
 
 
+def test_nested_model_uses_adjacent_projector_only_when_vision_is_enabled(tmp_path, monkeypatch):
+    from hermes_cli.local_runtime import bootstrap
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    repo = tmp_path / "models" / "publisher" / "repo"
+    repo.mkdir(parents=True)
+    model = repo / "Vision-Model-Q4.gguf"
+    projector = repo / "mmproj-F16.gguf"
+    model.touch()
+    projector.write_bytes(b"projector")
+    monkeypatch.setattr(presets, "read_gguf_header", lambda p: SimpleNamespace(path=p, sampling_defaults={}))
+    monkeypatch.setattr(presets, "profile_from_gguf", lambda h: ModelProfile(
+        name=h.path.stem, weights_bytes=4 << 30, embd_table_bytes=0,
+        n_ctx_train=65536, layers=[]))
+    budget = HardwareBudget(12 << 30, 12 << 30, 16 << 30)
+
+    enabled = presets.preset_for_model(model, budget, set())
+    assert enabled.keys["mmproj"] == str(projector)
+    assert bootstrap.staged_models() == [model]
+
+    bootstrap.set_model_vision_enabled("Vision-Model-Q4", False)
+    disabled = presets.preset_for_model(model, budget, set())
+    assert "mmproj" not in disabled.keys
+
+
 def test_optional_draft_is_enabled_only_with_room_at_the_selected_window(tmp_path, monkeypatch):
     from dataclasses import replace
     from hermes_cli.local_runtime import bootstrap, catalog

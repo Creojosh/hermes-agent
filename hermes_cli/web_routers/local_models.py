@@ -63,6 +63,10 @@ class RuntimeConfigureBody(BaseModel):
     extra_args: list[str] = Field(default_factory=list)  # argv items, passed verbatim
 
 
+class ModelsDirectoryBody(BaseModel):
+    path: str = ""                # empty -> <default HERMES_HOME>/models
+
+
 class ModelDownloadBody(BaseModel):
     model_id: str
 
@@ -81,6 +85,10 @@ class ModelEjectBody(BaseModel):
 
 class ModelActivateBody(BaseModel):
     model_id: str               # exact variant id (a staged .gguf stem)
+
+
+class ModelVisionBody(BaseModel):
+    enabled: bool
 
 
 class BrowsedDownloadBody(BaseModel):
@@ -307,12 +315,16 @@ def _model_id_for(gguf: Path) -> str:
 
 def _variant_files_on_disk(model_id: str) -> "list[Path]":
     """Every local file of a staged model: all split parts plus catalog-declared assets (mmproj/draft) when present."""
-    files = [p for p in bootstrap.models_dir().glob("*.gguf") if _model_id_for(p) == model_id]
+    files = [p for p in bootstrap.models_dir().rglob("*.gguf") if _model_id_for(p) == model_id]
+    model_path = bootstrap.staged_model_path(model_id)
+    projector = bootstrap.vision_projector_for(model_path) if model_path is not None else None
+    if projector is not None:
+        files.append(projector)
     hit = catalog.find_entry_for_model(model_id)
     assets = (hit[0].mmproj, hit[0].draft) if hit is not None else ()
     files += [bootstrap.assets_dir() / a.local_name for a in assets
               if a is not None and (bootstrap.assets_dir() / a.local_name).exists()]
-    return files
+    return list(dict.fromkeys(files))
 
 
 def _probe_range_support(url: str) -> int:
@@ -538,8 +550,22 @@ def _staged_row(gguf: Path) -> Dict[str, Any]:
     model_id = _model_id_for(gguf)
     # Split models: report the whole variant's bytes, not one part's.
     hit = catalog.find_entry_for_model(model_id)
-    size = hit[1].size_bytes if hit is not None else gguf.stat().st_size
-    return {"id": model_id, "size_bytes": size, "size_label": _human_gb(size)}
+    split = re.search(_SPLIT_PART_RE, gguf.name)
+    if hit is not None:
+        size = hit[1].size_bytes
+    elif split is not None:
+        stem = gguf.name[:split.start()]
+        size = sum(path.stat().st_size for path in gguf.parent.glob(f"{stem}-*-of-*.gguf"))
+    else:
+        size = gguf.stat().st_size
+    projector = bootstrap.vision_projector_for(gguf)
+    return {
+        "id": model_id,
+        "size_bytes": size,
+        "size_label": _human_gb(size),
+        "vision_available": projector is not None,
+        "vision_enabled": projector is not None and bootstrap.model_vision_enabled(model_id),
+    }
 
 
 def _active_llamacpp_model_id() -> str | None:
@@ -591,6 +617,7 @@ def local_models_status():
         "placement": placement,
         "models": [_staged_row(gguf) for gguf in bootstrap.staged_models()] if mdir.exists() else [],
         "models_dir": str(mdir),
+        "models_dir_custom": mdir != bootstrap.default_models_dir(),
     }
 
 
@@ -833,6 +860,42 @@ async def local_models_runtime_configure(body: RuntimeConfigureBody, profile: Op
     return {"ok": True, "capabilities": capabilities}
 
 
+@router.post("/api/local-models/models-directory")
+async def local_models_directory(body: ModelsDirectoryBody):
+    """Select the machine-wide GGUF library and immediately inventory models already inside it."""
+    raw = body.path.strip()
+    if raw:
+        candidate = Path(raw).expanduser().resolve()
+        if not candidate.exists():
+            raise HTTPException(status_code=400, detail="The selected model folder does not exist")
+        if not candidate.is_dir():
+            raise HTTPException(status_code=400, detail="The selected model path is not a folder")
+        configured = str(candidate)
+    else:
+        candidate = bootstrap.default_models_dir()
+        with _http_error(400, "Could not prepare the default model folder: "):
+            candidate.mkdir(parents=True, exist_ok=True)
+        configured = ""
+
+    with _http_error(400, "Could not read the selected model folder: "):
+        detected = bootstrap.staged_in(candidate)
+
+    previous = bootstrap.models_dir()
+    with _CONFIG_MUTATION_LOCK:
+        bootstrap.set_models_dir(configured)
+    selected = bootstrap.models_dir()
+
+    if selected != previous:
+        _refresh_runtime("model-library change runtime refresh skipped")
+
+    return {
+        "ok": True,
+        "models_dir": str(selected),
+        "models_dir_custom": selected != bootstrap.default_models_dir(),
+        "detected_models": len(detected),
+    }
+
+
 # ── model download (job with byte progress) ──────────────────
 def _download_target(model_id: str):
     """(entry, variant) for a family id (this machine's selected variant — the same planning budget as the
@@ -874,6 +937,19 @@ async def local_models_delete(model_id: str):
     threading.Thread(target=_refresh_runtime, args=("post-delete runtime refresh skipped",), daemon=True,
                      name="lr-post-delete").start()
     return {"ok": True}
+
+
+@router.post("/api/local-models/models/{model_id}/vision")
+async def local_models_vision(model_id: str, body: ModelVisionBody):
+    model = bootstrap.staged_model_path(model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"{model_id} is not downloaded")
+    if bootstrap.vision_projector_for(model) is None:
+        raise HTTPException(status_code=409, detail=f"{model_id} has no vision projector")
+    with _CONFIG_MUTATION_LOCK:
+        bootstrap.set_model_vision_enabled(model_id, body.enabled)
+    _refresh_runtime("vision setting runtime refresh skipped")
+    return {"ok": True, "enabled": body.enabled}
 
 
 # ── quickstart: one click from nothing to a working default ──

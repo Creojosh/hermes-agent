@@ -1303,6 +1303,13 @@ export const ja = defineLocale({
       ram: label => `RAM ${label}`,
       unifiedMemory: 'ユニファイドメモリ',
       modelsTitle: 'モデル',
+      modelsDirectoryTitle: 'モデル保存フォルダー',
+      modelsDirectoryDescription: path => `すべてのプロファイルで共有 · ${path}`,
+      modelsDirectoryAction: 'フォルダーを選択',
+      modelsDirectoryChoose: 'ローカルモデルの保存先を選択',
+      modelsDirectoryDefault: '既定に戻す',
+      modelsDirectorySaved: count => `フォルダーを保存しました · 既存モデルを ${count} 件検出しました。`,
+      modelsDirectoryFailed: 'モデル保存フォルダーを変更できませんでした',
       recommended: 'おすすめ',
       recommendedReason: {
         'best-quality-resident':
@@ -1340,6 +1347,8 @@ export const ja = defineLocale({
       placementSpilledTip:
         'モデルの一部がシステム RAM から動作しています — 動作しますが遅くなります。よりコンパクトなビルドか小さいコンテキストなら完全に収まります。',
       loadingPill: '読み込み中…',
+      visionToggle: '画像認識',
+      visionFailed: 'このモデルの画像認識設定を変更できませんでした',
       ejectTip: 'GPU メモリを解放（必要時に再読み込み）',
       ejected: 'モデルをアンロードしました——GPU メモリを解放しました。',
       ejectFailed: 'モデルをアンロードできませんでした',
@@ -1383,7 +1392,6 @@ export const ja = defineLocale({
       pillFullContextTip: '最初からモデルの完全なコンテキストウィンドウで動作します',
       pillUpTo: max => `最大 ${max} コンテキスト`,
       pillGrowsTip: '会話が必要とするにつれて自動的に拡張します',
-      pillVision: '画像対応',
       deleteAction: 'モデルを削除',
       deleteConfirm: model => `${model} をディスクから削除しますか？`,
       deleted: model => `${model} を削除しました。`,

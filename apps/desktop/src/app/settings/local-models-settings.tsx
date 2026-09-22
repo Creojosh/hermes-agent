@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Tip } from '@/components/ui/tooltip'
 import {
   activateLocalModel,
+  configureLocalModelsDirectory,
   configureLocalRuntime,
   deleteLocalModel,
   downloadBrowsedModel,
@@ -22,6 +23,7 @@ import {
   listHFRepoFiles,
   quickstartLocalModels,
   searchHFModels,
+  setLocalModelVision,
   setLocalServer,
   sideloadLocalModel
 } from '@/hermes'
@@ -151,11 +153,7 @@ function decodeRuntimeArgs(args: string[], options: LocalRuntimeOption[]) {
   return { selected, unknown }
 }
 
-function encodeRuntimeArgs(
-  options: LocalRuntimeOption[],
-  selected: RuntimeSelections,
-  unknown: string[]
-): string[] {
+function encodeRuntimeArgs(options: LocalRuntimeOption[], selected: RuntimeSelections, unknown: string[]): string[] {
   const args = [...unknown]
 
   for (const option of options) {
@@ -189,6 +187,8 @@ export function LocalModelsSettings() {
   const [hardware, setHardware] = useState<LocalHardware | null>(null)
   const [catalog, setCatalog] = useState<LocalCatalogModel[] | null>(null)
   const [deleting, setDeleting] = useState<null | string>(null)
+  const [modelsDirectorySaving, setModelsDirectorySaving] = useState(false)
+  const [visionSaving, setVisionSaving] = useState<null | string>(null)
   const [serverBusy, setServerBusy] = useState(false)
   // Advanced configuration is the front door: no model or runtime choice is imposed.
   const [configure, setConfigure] = useState(true)
@@ -304,6 +304,41 @@ export function LocalModelsSettings() {
     }
   }
 
+  async function saveModelsDirectory(path: string) {
+    setModelsDirectorySaving(true)
+
+    try {
+      const result = await configureLocalModelsDirectory(path)
+      notify({
+        durationMs: 3_500,
+        kind: 'success',
+        message: copy.modelsDirectorySaved(result.detected_models),
+        title: copy.title
+      })
+      refresh()
+    } catch (err) {
+      notifyError(err, copy.modelsDirectoryFailed)
+    } finally {
+      setModelsDirectorySaving(false)
+    }
+  }
+
+  async function chooseModelsDirectory() {
+    try {
+      const paths = await window.hermesDesktop.selectPaths({
+        directories: true,
+        multiple: false,
+        title: copy.modelsDirectoryChoose
+      })
+
+      if (paths[0]) {
+        await saveModelsDirectory(paths[0])
+      }
+    } catch (err) {
+      notifyError(err, copy.modelsDirectoryFailed)
+    }
+  }
+
   async function handleActivate(target: null | string, displayName: string) {
     if (!target) {
       return
@@ -324,6 +359,19 @@ export function LocalModelsSettings() {
       refresh()
     } catch (err) {
       notifyError(err, copy.ejectFailed)
+    }
+  }
+
+  async function handleVision(modelId: string, enabled: boolean) {
+    setVisionSaving(modelId)
+
+    try {
+      await setLocalModelVision(modelId, enabled)
+      refresh()
+    } catch (err) {
+      notifyError(err, copy.visionFailed)
+    } finally {
+      setVisionSaving(null)
     }
   }
 
@@ -462,7 +510,9 @@ export function LocalModelsSettings() {
   const rJob = runningRuntimeInstall(jobs)
   const lastError = jobs.find(j => j.status === 'error')
 
-  const sortedCatalog = [...catalog].sort((a, b) => fitRank(a) - fitRank(b))
+  const sortedCatalog = catalog
+    .filter(model => !status.models_dir_custom || model.downloaded)
+    .sort((a, b) => fitRank(a) - fitRank(b))
   const detectedRuntimeOptions = usableRuntimeOptions(runtimeCapabilities?.options ?? [])
   const visibleRuntimeOptions = detectedRuntimeOptions.filter(option => {
     const haystack = `${option.flags.join(' ')} ${option.value} ${option.description}`.toLowerCase()
@@ -483,8 +533,8 @@ export function LocalModelsSettings() {
   const needsSetup = !status.runtime_installed || status.models.length === 0
   // The setup hero is reserved for an automatic recommendation. A
   // spilled model remains visible below, but setup must not silently choose it.
-  const heroModel = catalog.find(c => c.recommended && c.fits) ?? null
-  const hasRecommendation = catalog.some(c => c.recommended)
+  const heroModel = status.models_dir_custom ? null : (catalog.find(c => c.recommended && c.fits) ?? null)
+  const hasRecommendation = !status.models_dir_custom && catalog.some(c => c.recommended)
 
   const failedInstall = jobs.some(job => job.kind === 'runtime-install' && job.status === 'error')
 
@@ -863,8 +913,42 @@ export function LocalModelsSettings() {
       </SettingsSection>
 
       {/* ── Models ── */}
-      <SettingsSection icon={Download} meta={`${catalog.length}`} title={copy.modelsTitle}>
-        {!hasRecommendation && (
+      <SettingsSection
+        icon={Download}
+        meta={`${status.models_dir_custom ? status.models.length : catalog.length}`}
+        title={copy.modelsTitle}
+      >
+        {status.models_dir_custom !== undefined && (
+          <ListRow
+            action={
+              <div className="flex items-center gap-2">
+                {status.models_dir_custom && (
+                  <Button
+                    disabled={modelsDirectorySaving}
+                    onClick={() => void saveModelsDirectory('')}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    {copy.modelsDirectoryDefault}
+                  </Button>
+                )}
+                <Button
+                  disabled={modelsDirectorySaving}
+                  onClick={() => void chooseModelsDirectory()}
+                  size="sm"
+                  variant="outline"
+                >
+                  {modelsDirectorySaving ? <Loader2 className="animate-spin" /> : <FolderOpen />}
+                  {copy.modelsDirectoryAction}
+                </Button>
+              </div>
+            }
+            description={copy.modelsDirectoryDescription(status.models_dir)}
+            title={copy.modelsDirectoryTitle}
+          />
+        )}
+
+        {!status.models_dir_custom && !hasRecommendation && (
           <ListRow
             action={
               <Button
@@ -887,6 +971,7 @@ export function LocalModelsSettings() {
             const dJob = runningDownloadFor(jobs, model.id)
             const anyDownloadRunning = jobs.some(j => j.kind === 'model-download' && j.status === 'running')
             const activateTarget = model.downloaded_model_id ?? model.model_id
+            const stagedModel = status.models.find(item => item.id === activateTarget)
             const isActive = Boolean(activateTarget && status.active_model_id === activateTarget)
             const residency = activateTarget ? status.loaded_models[activateTarget] : undefined
             const isLoaded = residency === 'loaded' || residency === 'ready'
@@ -904,6 +989,18 @@ export function LocalModelsSettings() {
                 action={
                   model.downloaded ? (
                     <div className="flex items-center justify-end gap-2">
+                      {stagedModel?.vision_available && (
+                        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <input
+                            aria-label={`${copy.visionToggle} ${model.display_name}`}
+                            checked={Boolean(stagedModel.vision_enabled)}
+                            disabled={visionSaving === stagedModel.id}
+                            onChange={event => void handleVision(stagedModel.id, event.target.checked)}
+                            type="checkbox"
+                          />
+                          {copy.visionToggle}
+                        </label>
+                      )}
                       {isLoaded && livePlacement && (
                         <Tip label={livePlacement.spilled ? copy.placementSpilledTip : copy.placementResidentTip}>
                           <Pill tone={livePlacement.spilled ? 'warn' : 'success'}>
@@ -1044,8 +1141,6 @@ export function LocalModelsSettings() {
                         ))}
 
                       {!model.fits && <Pill>{copy.pillUpTo(model.native_context_label)}</Pill>}
-
-                      {model.vision && <Pill>{copy.pillVision}</Pill>}
                     </span>
 
                     {isActive && !isLoaded && !isLoadingNow && status.server_running && (
@@ -1058,7 +1153,8 @@ export function LocalModelsSettings() {
                   <span className="inline-flex items-center gap-2">
                     {model.display_name}
 
-                    {model.recommended &&
+                    {!status.models_dir_custom &&
+                      model.recommended &&
                       (model.recommended_reason ? (
                         // The why, straight from the resolver: the tooltip is
                         // the branch that picked this model, so the shown
@@ -1092,6 +1188,18 @@ export function LocalModelsSettings() {
                 <ListRow
                   action={
                     <div className="flex items-center justify-end gap-2">
+                      {m.vision_available && (
+                        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <input
+                            aria-label={`${copy.visionToggle} ${m.id}`}
+                            checked={Boolean(m.vision_enabled)}
+                            disabled={visionSaving === m.id}
+                            onChange={event => void handleVision(m.id, event.target.checked)}
+                            type="checkbox"
+                          />
+                          {copy.visionToggle}
+                        </label>
+                      )}
                       {isLoaded && livePlacement && (
                         <Tip label={livePlacement.spilled ? copy.placementSpilledTip : copy.placementResidentTip}>
                           <Pill tone={livePlacement.spilled ? 'warn' : 'success'}>

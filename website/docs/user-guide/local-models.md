@@ -21,8 +21,11 @@ after a model is downloaded.
 2. Click **Install runtime**. Hermes downloads the official llama.cpp
    build for your hardware (a few hundred MB), verifies it, and keeps it
    updated.
-3. Pick a model from the catalog and click **Download**.
-4. Click **Use**. New chats now run on the local model.
+3. Optionally choose a **Model storage folder**. Hermes immediately detects
+   complete `.gguf` models anywhere below that folder (including
+   publisher/repository subfolders), and future downloads use that folder.
+4. Pick a model from the catalog and click **Download**.
+5. Click **Use**. New chats now run on the local model.
 
 That's the whole flow. The server starts and stops with Hermes, restarts
 survive app restarts, and switching back to a cloud provider is one click
@@ -96,6 +99,9 @@ models** section on the same page searches all of Hugging Face:
 - Already have a `.gguf` file on disk? **Add model file** links it into
   your library without copying it (the original stays where it is), and
   it's usable immediately.
+- Vision projectors such as `mmproj-F16.gguf` are paired with the model in
+  the same folder. They never appear as standalone models; use the model's
+  **Vision** checkbox to decide whether Hermes loads the projector.
 
 ## Using your own llama-server
 
@@ -114,7 +120,8 @@ builds, headless CLI machines), see
 
 The managed runtime is controlled by the `local_runtime` section of
 `config.yaml`. The desktop UI writes these values for you; they're
-documented for CLI and headless use:
+documented for CLI and headless use. Because the model library is a machine
+asset, `models_path` is read from the default profile's `config.yaml`:
 
 ```yaml
 local_runtime:
@@ -123,6 +130,9 @@ local_runtime:
   backend: auto      # auto | cuda | metal | vulkan | hip | cpu
   tag: b10362        # pinned llama.cpp release; Hermes updates it with
                      # each release after re-validation
+  models_path: ""    # empty = <default Hermes home>/models; a custom path
+                     # is shared by every profile on this machine
+  vision_disabled_models: []  # managed by the per-model Vision checkboxes
   detect_ports: [8081]  # extra ports to probe for a llama-server you run
                         # yourself (the default probe is :8080 only)
 ```
@@ -144,9 +154,12 @@ server; with no server reachable the error names the local runtime ("the local
 model server isn't running") instead of an unknown-provider or missing-API-key
 message.
 
-Models and runtime builds live under the Hermes home directory
-(`models/` and `runtimes/llamacpp/`). Selecting a local model as your
-main model uses the standard `model.provider: llamacpp` +
+By default, models and runtime builds live under the Hermes home directory
+(`models/` and `runtimes/llamacpp/`). The desktop's **Model storage folder**
+control can place the shared model library elsewhere; switching profiles does
+not switch or duplicate that library. With a custom library selected, the pane
+shows only detected models instead of the curated recommendations. Selecting a
+local model as your main model uses the standard `model.provider: llamacpp` +
 `model.default` settings — the same shape as every other provider.
 
 ## Requirements and limits

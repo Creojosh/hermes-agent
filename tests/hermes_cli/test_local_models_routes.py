@@ -80,6 +80,51 @@ def test_status_lists_staged_models_with_labels(client, tmp_path):
     assert row["size_label"].endswith("GB")
 
 
+def test_selecting_models_directory_detects_existing_models(client, tmp_path):
+    from hermes_cli import config as config_mod
+    from hermes_cli.local_runtime import bootstrap
+
+    library = tmp_path / "existing-library"
+    nested = library / "publisher" / "repo"
+    _write_fake_gguf(nested / "Already-Here.gguf")
+    _write_fake_gguf(nested / "mmproj-F16.gguf")
+
+    selected = client.post("/api/local-models/models-directory", json={"path": str(library)})
+    assert selected.status_code == 200
+    assert selected.json()["detected_models"] == 1
+    assert bootstrap.models_dir() == library.resolve()
+
+    status = client.get("/api/local-models/status").json()
+    assert status["models_dir"] == str(library.resolve())
+    assert status["models_dir_custom"] is True
+    assert [model["id"] for model in status["models"]] == ["Already-Here"]
+    assert status["models"][0]["vision_available"] is True
+    assert status["models"][0]["vision_enabled"] is True
+    assert config_mod.read_user_config_raw()["local_runtime"]["models_path"] == str(library.resolve())
+
+    vision = client.post("/api/local-models/models/Already-Here/vision", json={"enabled": False})
+    assert vision.status_code == 200
+    assert client.get("/api/local-models/status").json()["models"][0]["vision_enabled"] is False
+
+    reset = client.post("/api/local-models/models-directory", json={"path": ""})
+    assert reset.status_code == 200
+    assert bootstrap.models_dir() == bootstrap.default_models_dir()
+    assert client.get("/api/local-models/status").json()["models_dir_custom"] is False
+
+
+def test_status_reports_total_size_for_split_model(client, tmp_path, monkeypatch):
+    from hermes_cli.local_runtime import bootstrap
+
+    monkeypatch.setattr(bootstrap, "models_dir", lambda: tmp_path)
+    _write_fake_gguf(tmp_path / "Split-Model-00001-of-00002.gguf")
+    _write_fake_gguf(tmp_path / "Split-Model-00002-of-00002.gguf")
+
+    response = client.get("/api/local-models/status")
+
+    assert response.status_code == 200
+    assert response.json()["models"][0]["size_bytes"] == 2048
+
+
 def test_status_tracks_preset_spill_and_restored_window(client, tmp_path, monkeypatch):
     from dataclasses import replace
     from types import SimpleNamespace

@@ -60,6 +60,17 @@ export function configureLocalRuntime(
   })
 }
 
+export function configureLocalModelsDirectory(
+  path: string
+): Promise<{ detected_models: number; models_dir: string; models_dir_custom: boolean; ok: boolean }> {
+  return hermesApi<{ detected_models: number; models_dir: string; models_dir_custom: boolean; ok: boolean }>({
+    ...profileScoped(),
+    body: { path },
+    method: 'POST',
+    path: '/api/local-models/models-directory'
+  })
+}
+
 export interface QuickstartResponse {
   display_name: string
   download_bytes: number
@@ -92,6 +103,15 @@ export function deleteLocalModel(modelId: string): Promise<{ ok: boolean }> {
     ...profileScoped(),
     method: 'DELETE',
     path: `/api/local-models/models/${encodeURIComponent(modelId)}`
+  })
+}
+
+export function setLocalModelVision(modelId: string, enabled: boolean): Promise<{ enabled: boolean; ok: boolean }> {
+  return hermesApi<{ enabled: boolean; ok: boolean }>({
+    ...profileScoped(),
+    body: { enabled },
+    method: 'POST',
+    path: `/api/local-models/models/${encodeURIComponent(modelId)}/vision`
   })
 }
 

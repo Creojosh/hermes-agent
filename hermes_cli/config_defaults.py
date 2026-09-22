@@ -2620,6 +2620,12 @@ DEFAULT_CONFIG = {
         "backend": "auto",
         # Optional directory containing llama-server. Empty uses Hermes' managed runtime.
         "runtime_path": "",
+        # Machine-wide GGUF library. Empty uses <default HERMES_HOME>/models. Although this key is
+        # stored in the default profile's config.yaml, every profile resolves the same directory.
+        "models_path": "",
+        # Model ids whose adjacent/catalog vision projector should not be loaded. Projectors are
+        # enabled by default when present; the Local Models pane owns this machine-wide toggle.
+        "vision_disabled_models": [],
         # Passed verbatim after Hermes' required router arguments. One list item = one argv item.
         "extra_args": [],
         "models_max": 4,  # Router process: how many models may be resident at once.

@@ -41,12 +41,87 @@ def _detect_gpu_vendor() -> str | None:
     return None
 
 
-def models_dir() -> Path:
-    """Machine-scoped, deliberately NOT profile-scoped: a 20 GB GGUF is a machine asset, and every
-    profile shares the one managed server that serves it (same rule as runtimes_root())."""
+def default_models_dir() -> Path:
+    """Default machine-wide GGUF library before any user override."""
     from hermes_constants import get_default_hermes_root
 
     return get_default_hermes_root() / "models"
+
+
+def _machine_runtime_section() -> dict:
+    """Read machine-wide runtime settings from the default profile under an explicit binding."""
+    from hermes_constants import (
+        get_default_hermes_root,
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+    from hermes_cli.config import load_config_readonly
+
+    token = set_hermes_home_override(get_default_hermes_root())
+    try:
+        return dict(load_config_readonly().get("local_runtime") or {})
+    except Exception:  # noqa: BLE001 — model discovery falls back safely when config is damaged
+        return {}
+    finally:
+        reset_hermes_home_override(token)
+
+
+def models_dir() -> Path:
+    """Return the machine-wide GGUF library, including a user-selected location.
+
+    The setting lives in the default profile's ``config.yaml`` because models are machine assets:
+    switching profiles must not silently switch libraries or re-download tens of gigabytes. Read
+    it under an explicit root binding so a multiplexed request cannot leak the active profile into
+    this process-wide decision.
+    """
+    configured = str(_machine_runtime_section().get("models_path") or "").strip()
+    return Path(configured).expanduser().resolve() if configured else default_models_dir()
+
+
+def set_models_dir(path: str) -> None:
+    """Persist the shared model library in the default profile's config.
+
+    Runtime enablement and the selected chat model remain profile-scoped; the GGUF library does
+    not. Binding the shared root here keeps A -> B -> A profile traffic on one storage location.
+    """
+    from hermes_constants import (
+        get_default_hermes_root,
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+    from hermes_cli import config as config_mod
+
+    token = set_hermes_home_override(get_default_hermes_root())
+    try:
+        config = config_mod.load_config()
+        config.setdefault("local_runtime", {})["models_path"] = path
+        config_mod.save_config(config)
+    finally:
+        reset_hermes_home_override(token)
+
+
+def set_model_vision_enabled(model_id: str, enabled: bool) -> None:
+    """Persist whether one staged model should load its optional vision projector."""
+    from hermes_constants import (
+        get_default_hermes_root,
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+    from hermes_cli import config as config_mod
+
+    token = set_hermes_home_override(get_default_hermes_root())
+    try:
+        config = config_mod.load_config()
+        section = config.setdefault("local_runtime", {})
+        disabled = {str(item) for item in section.get("vision_disabled_models") or []}
+        if enabled:
+            disabled.discard(model_id)
+        else:
+            disabled.add(model_id)
+        section["vision_disabled_models"] = sorted(disabled)
+        config_mod.save_config(config)
+    finally:
+        reset_hermes_home_override(token)
 
 
 def assets_dir() -> Path:
@@ -55,12 +130,24 @@ def assets_dir() -> Path:
     return models_dir() / "assets"
 
 
+def _is_companion_gguf(path: Path) -> bool:
+    """True for projector/draft GGUFs that must never surface as standalone chat models."""
+    name = path.name.lower()
+    return (name.startswith(("mmproj", "dspark")) or "-mmproj-" in name
+            or "draft" in name)
+
+
 def staged_in(models_dir: Path, *, require_complete: bool = True) -> "list[Path]":
-    """Servable GGUFs in a directory: single files, plus split GGUFs once by their first part.
+    """Servable GGUFs below a directory: single files, plus complete splits once by first part.
+
+    User-selected libraries commonly use ``publisher/repository/*.gguf`` nesting. Projectors and
+    speculative drafts are companions, never models, and are filtered before split handling.
     With ``require_complete`` a split counts only when EVERY part is on disk — a mid-download split
     is not servable and must not surface anywhere as a model."""
-    files = sorted(models_dir.glob("*.gguf"))
-    names = {p.name for p in files}
+    files = [p for p in sorted(models_dir.rglob("*.gguf")) if not _is_companion_gguf(p)]
+    names_by_parent: dict[Path, set[str]] = {}
+    for path in files:
+        names_by_parent.setdefault(path.parent, set()).add(path.name)
     out = []
     for p in files:
         m = SPLIT_PART_RE.search(p.name)
@@ -70,6 +157,7 @@ def staged_in(models_dir: Path, *, require_complete: bool = True) -> "list[Path]
         if m.group(1) != "00001":
             continue
         stem, total = p.name[: m.start()], int(m.group(2))
+        names = names_by_parent[p.parent]
         if not require_complete or all(f"{stem}-{i:05d}-of-{m.group(2)}.gguf" in names
                                        for i in range(2, total + 1)):
             out.append(p)
@@ -83,6 +171,34 @@ def staged_models() -> "list[Path]":
 
 def staged_model_ids() -> "list[str]":
     return [model_id_from_stem(p.stem) for p in staged_models()]
+
+
+def staged_model_path(model_id: str) -> Path | None:
+    return next((path for path in staged_models()
+                 if model_id_from_stem(path.stem) == model_id), None)
+
+
+def vision_projector_for(model: Path) -> Path | None:
+    """Projector paired with *model*: catalog asset first, then an adjacent mmproj GGUF."""
+    from hermes_cli.local_runtime.catalog import entry_for_model
+
+    model_id = model_id_from_stem(model.stem)
+    entry = entry_for_model(model_id)
+    if entry is not None and entry.mmproj is not None:
+        catalog_projector = assets_dir() / entry.mmproj.local_name
+        if catalog_projector.is_file():
+            return catalog_projector
+    candidates = sorted(
+        (path for path in model.parent.glob("*.gguf") if "mmproj" in path.name.lower()),
+        key=lambda path: ("f16" not in path.name.lower(), path.name.lower()),
+    )
+    return candidates[0] if candidates else None
+
+
+def model_vision_enabled(model_id: str) -> bool:
+    disabled = {str(item) for item in
+                _machine_runtime_section().get("vision_disabled_models") or []}
+    return model_id not in disabled
 
 
 def _presets_stale() -> bool:
@@ -304,7 +420,8 @@ def ensure_local_runtime(config: dict, force: bool = False) -> "object | None":
 
         try:
             from hermes_cli.local_runtime.binaries import (
-                default_tag, ensure_runtime_installed, installed_tags, select_backend)
+                default_tag, ensure_runtime_installed, installed_tags, select_backend,
+                server_binary)
             from hermes_cli.local_runtime.supervisor import LlamaServerSupervisor
 
             custom_runtime = str(section.get("runtime_path") or "").strip()
@@ -320,7 +437,7 @@ def ensure_local_runtime(config: dict, force: bool = False) -> "object | None":
             if custom_runtime:
                 install_dir = Path(custom_runtime).expanduser().resolve()
                 # Resolve before constructing the supervisor so a bad selection is reported at boot.
-                binaries.server_binary(install_dir)
+                server_binary(install_dir)
                 backend = "custom"
             else:
                 have = installed_tags()

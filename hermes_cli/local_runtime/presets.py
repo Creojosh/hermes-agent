@@ -79,6 +79,7 @@ def _draft_fits(path: Path, profile, budget: HardwareBudget, window: int, overhe
 def preset_for_model(gguf: Path, budget: HardwareBudget,
                      mtp_capable: set[str], *, requested_window: int | None = None) -> PresetEntry | None:
     """The launch decision for one staged model, or None when its header is unreadable."""
+    from hermes_cli.local_runtime.bootstrap import model_vision_enabled, vision_projector_for
     from hermes_cli.local_runtime.catalog import entry_for_model
     from hermes_cli.local_runtime.growth import load_window_overrides
 
@@ -92,9 +93,8 @@ def preset_for_model(gguf: Path, budget: HardwareBudget,
     entry = entry_for_model(model_id)
     is_mtp = entry.mtp if entry is not None else model_id in mtp_capable
 
-    mmproj_path = _asset_path(entry.mmproj) if entry is not None else None
-    fixed_overhead = RUNTIME_OVERHEAD_BYTES + (
-        entry.mmproj.size_bytes if entry is not None and mmproj_path is not None else 0)
+    mmproj_path = vision_projector_for(gguf) if model_vision_enabled(model_id) else None
+    fixed_overhead = RUNTIME_OVERHEAD_BYTES + (mmproj_path.stat().st_size if mmproj_path else 0)
     plan = plan_launch(profile, budget, mtp_capable=is_mtp, fixed_overhead=fixed_overhead,
                        requested_window=(load_window_overrides().get(model_id)
                                          if requested_window is None else requested_window))
@@ -126,8 +126,9 @@ def preset_for_model(gguf: Path, budget: HardwareBudget,
     if entry is not None:
         for k, v in (entry.sampling or {}).items():
             keys.setdefault(k, v)
-        if mmproj_path is not None:
-            keys["mmproj"] = str(mmproj_path)
+    if mmproj_path is not None:
+        keys["mmproj"] = str(mmproj_path)
+    if entry is not None:
         draft_path = _asset_path(entry.draft) if decision.spilled else None
         if draft_path is not None and _draft_fits(draft_path, profile, budget, decision.window, plan.overhead_bytes):
             keys["model-draft"] = str(draft_path)
@@ -142,6 +143,7 @@ def _launch_footprint(gguf: Path, budget: HardwareBudget) -> int | None:
     """Estimated resident bytes for one staged model at the window this policy grants it, or None
     when it cannot be priced: an unreadable header, or a model the physics check refuses outright
     (it never loads, so it must not shrink the residency cap)."""
+    from hermes_cli.local_runtime.bootstrap import model_vision_enabled, vision_projector_for
     from hermes_cli.local_runtime.catalog import entry_for_model
     from hermes_cli.local_runtime.growth import load_window_overrides
 
@@ -153,7 +155,8 @@ def _launch_footprint(gguf: Path, budget: HardwareBudget) -> int | None:
         return None
     entry = entry_for_model(model_id)
     is_mtp = entry.mtp if entry is not None else False
-    mmproj = entry.mmproj.size_bytes if entry is not None and _asset_path(entry.mmproj) else 0
+    projector = vision_projector_for(gguf) if model_vision_enabled(model_id) else None
+    mmproj = projector.stat().st_size if projector else 0
     plan = plan_launch(profile, budget, mtp_capable=is_mtp,
                        fixed_overhead=RUNTIME_OVERHEAD_BYTES + mmproj,
                        requested_window=load_window_overrides().get(model_id))

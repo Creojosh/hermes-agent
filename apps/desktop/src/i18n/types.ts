@@ -1260,6 +1260,13 @@ export interface Translations {
       ram: (label: string) => string
       unifiedMemory: string
       modelsTitle: string
+      modelsDirectoryTitle: string
+      modelsDirectoryDescription: (path: string) => string
+      modelsDirectoryAction: string
+      modelsDirectoryChoose: string
+      modelsDirectoryDefault: string
+      modelsDirectorySaved: (count: number) => string
+      modelsDirectoryFailed: string
       recommended: string
       /** Recommended-badge tooltip by resolver branch; unknown keys (newer
        *  backend) simply show no tooltip. */
@@ -1298,6 +1305,8 @@ export interface Translations {
       placementResidentTip: string
       placementSpilledTip: string
       loadingPill: string
+      visionToggle: string
+      visionFailed: string
       ejectTip: string
       ejected: string
       ejectFailed: string
@@ -1339,7 +1348,6 @@ export interface Translations {
       pillFullContextTip: string
       pillUpTo: (max: string) => string
       pillGrowsTip: string
-      pillVision: string
       deleteAction: string
       deleteConfirm: (model: string) => string
       deleted: (model: string) => string

@@ -1496,6 +1496,14 @@ export const en: Translations = {
       ram: label => `${label} RAM`,
       unifiedMemory: 'Unified memory',
       modelsTitle: 'Models',
+      modelsDirectoryTitle: 'Model storage folder',
+      modelsDirectoryDescription: path => `Shared by every profile · ${path}`,
+      modelsDirectoryAction: 'Choose folder',
+      modelsDirectoryChoose: 'Choose where to store local models',
+      modelsDirectoryDefault: 'Use default',
+      modelsDirectorySaved: count =>
+        count === 1 ? 'Folder saved · 1 existing model detected.' : `Folder saved · ${count} existing models detected.`,
+      modelsDirectoryFailed: 'Could not change the model storage folder',
       recommended: 'Recommended',
       /* The Recommended badge's tooltip, keyed by the resolver branch that
          made the pick. Qualitative on purpose: predictions order candidates,
@@ -1547,6 +1555,8 @@ export const en: Translations = {
       placementSpilledTip:
         'Part of this model runs from system RAM — it works, but slower. A more compact build or a smaller context would fit fully.',
       loadingPill: 'Loading…',
+      visionToggle: 'Vision',
+      visionFailed: 'Could not change vision for this model',
       ejectTip: 'Free GPU memory (loads again on the next message)',
       ejected: 'Model unloaded — GPU memory freed.',
       ejectFailed: 'Could not unload the model',
@@ -1590,7 +1600,6 @@ export const en: Translations = {
       pillFullContextTip: "Runs at the model's complete context window from the start",
       pillUpTo: max => `Up to ${max} context`,
       pillGrowsTip: 'Grows automatically as your conversation needs more room',
-      pillVision: 'Sees images',
       deleteAction: 'Delete model',
       deleteConfirm: model => `Delete ${model} from disk?`,
       deleted: model => `${model} deleted.`,
