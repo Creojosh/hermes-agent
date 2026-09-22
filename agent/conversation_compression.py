@@ -3022,7 +3022,13 @@ def _run_summary_dispatch(
                 # no-op entry claims (lock sit-outs, gates, the cancelled-fence skip above) cannot supersede
                 # the candidate this run produces (#112482).
                 _mark_compressor_working_attempt(agent.context_compressor, attempt_generation)
-                compressed = compress_fn(messages, **compress_kwargs)
+                from agent.decision_compression import try_decision_compression
+                compressed = try_decision_compression(
+                    agent, messages, compress_kwargs, deadline=_host_stream_deadline,
+                    cancelled=_compression_cancel_requested,
+                )
+                if compressed is None:
+                    compressed = compress_fn(messages, **compress_kwargs)
                 # Freeze a hard stop that arrived after the last provider attempt but before session state rotates.
                 if hard_cancel_event is not None and hard_cancel_event.is_set():
                     raise AuxiliaryExplicitCancellation()

@@ -295,6 +295,9 @@ class _AuxMeter:
 
 def _compress_with_policy(spec: dict, messages) -> tuple:
     """Run one policy; returns (compressed, compressor, compaction-cost dict)."""
+    if spec.get("engine") in {"llama_decision", "llama_summary"}:
+        from evals.compaction.llama_decision_arm import compress
+        return compress(spec, messages)
     if spec.get("engine") == "jev":
         from evals.compaction.jev_arm import JevCompactor, JevOptions
 
@@ -417,7 +420,20 @@ def main():
     ap.add_argument("--questions", type=int, default=15)
     ap.add_argument("--out", required=True)
     ap.add_argument("--also-uncompacted", action="store_true")
+    ap.add_argument("--decision-base-url", help="Already-running llama.cpp OpenAI API root")
+    ap.add_argument("--decision-model", help="Model already loaded on that server")
+    ap.add_argument("--decision-context-length", type=int, default=65536)
+    ap.add_argument("--decision-key-env", default="LLAMA_API_KEY", help="Credential environment variable name")
     args = ap.parse_args()
+    if any(name.startswith('llama_') for name in args.policies.split(',')):
+        if not args.decision_base_url or not args.decision_model:
+            ap.error('llama policies require --decision-base-url and --decision-model')
+        import os
+        route = {"base_url": args.decision_base_url, "model": args.decision_model,
+                 "context_length": args.decision_context_length,
+                 "api_key": os.environ.get(args.decision_key_env, '')}
+        for name in ('llama_decision', 'llama_summary'):
+            POLICIES[name] = {**POLICIES[name], 'route': route}
 
     messages = load_transcript(args.transcript, cap_tokens=args.cap_tokens)
     out_dir = Path(args.out)

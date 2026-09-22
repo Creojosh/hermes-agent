@@ -17,6 +17,8 @@ EVAL_MODEL = "anthropic/claude-fable-5"
 EVAL_WINDOW = 1_000_000
 
 POLICIES: Dict[str, Dict[str, Any]] = {
+    "llama_decision": {"engine": "llama_decision"},
+    "llama_summary": {"engine": "llama_summary"},
     # Shipping behavior, untouched.
     "current": {
         "ctor": {},

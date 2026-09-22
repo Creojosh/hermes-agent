@@ -2995,6 +2995,24 @@
       }
     },
     {
+      "name": "session.execution_mode",
+      "summary": "Read the session Chat/Agent mode or request an explicit change at the next user-turn boundary.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SessionExecutionModeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionExecutionModeResult"
+        }
+      }
+    },
+    {
       "name": "session.foreign.import",
       "summary": "Import a foreign session into this profile's history (idempotent per origin).",
       "params": [
@@ -27180,6 +27198,99 @@
           "max_bytes_process"
         ],
         "title": "SessionEventsStatsResult",
+        "type": "object"
+      },
+      "SessionExecutionModeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "chat",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mode"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionExecutionModeParams",
+        "type": "object"
+      },
+      "SessionExecutionModeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "policy": {
+            "enum": [
+              "auto",
+              "chat",
+              "agent"
+            ],
+            "title": "Policy",
+            "type": "string"
+          },
+          "active": {
+            "enum": [
+              "chat",
+              "agent"
+            ],
+            "title": "Active",
+            "type": "string"
+          },
+          "requested": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "chat",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requested"
+          }
+        },
+        "required": [
+          "available",
+          "policy",
+          "active"
+        ],
+        "title": "SessionExecutionModeResult",
         "type": "object"
       },
       "SessionForeignIdParams": {

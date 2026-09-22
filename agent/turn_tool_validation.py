@@ -79,6 +79,13 @@ def validate_tool_calls(
     from agent.conversation_loop import _invalid_tool_name_error_content
 
     tool_calls = assistant_message.tool_calls
+    if getattr(agent, '_conversation_mode_state', {}).get('active') == 'chat':
+        refusal = 'Chat mode cannot execute tools. Switch to Agent mode to perform this action.'
+        append_message(messages, {'role': 'assistant', 'content': refusal})
+        return ToolValidationVerdict('return', _partial_exit(
+            agent, messages, conversation_history, api_call_count,
+            refusal,
+        ), False)
     valid_names = agent.valid_tool_names
 
     def _verdict(action: str, result: Optional[Dict[str, Any]] = None) -> ToolValidationVerdict:

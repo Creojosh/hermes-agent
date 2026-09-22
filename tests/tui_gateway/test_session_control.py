@@ -76,6 +76,23 @@ def _call(server, method, *, rid=91, **params):
     return server._methods[method](rid, params)
 
 
+def test_execution_mode_is_durable_and_cannot_change_during_turn(server, session, hermes_home):
+    from hermes_state import SessionDB
+    sid, key, entry = session
+    with SessionDB(hermes_home / 'mode.db') as db:
+        db.create_session(key, 'gui')
+        entry['agent'] = SimpleNamespace(provider='custom', platform='gui', _session_db=db,
+            session_id=key, _cached_system_prompt='stable')
+        result = _call(server, 'session.execution_mode', session_id=sid, mode='chat')['result']
+        assert result['requested'] == 'chat'
+        assert entry['agent']._cached_system_prompt == 'stable'
+        del entry['agent']._conversation_mode_requested
+        assert _call(server, 'session.execution_mode', session_id=sid)['result']['requested'] == 'chat'
+        entry['running'] = True
+        assert 'error' in _call(server, 'session.execution_mode', session_id=sid, mode='agent')
+        assert db.get_session_model_config_value(key, 'conversation_mode_requested') == 'chat'
+
+
 def _control(server, sid):
     return _call(server, "session.control.read", session_id=sid)["result"]["control"]
 

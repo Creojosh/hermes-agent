@@ -51,6 +51,8 @@ DEFAULT_CONFIG = {
         "terminal_continue": True,
     },
     "agent": {
+        # New interactive llama.cpp conversations: lightweight Chat until promoted, or an explicit mode.
+        "conversation_mode": "auto",  # auto | chat | agent; other providers keep Agent.
         # Turn cap. null = unlimited (default; caps caused silent mid-task truncation). Positive int
         # caps; "none"/"unlimited"/"inf"/0/-1 also mean unlimited (resolve_turn_limit).
         "max_turns": None,
@@ -552,6 +554,8 @@ DEFAULT_CONFIG = {
 
     "compression": {
         "enabled": True,
+        # Use a compatible loaded llama.cpp model to retain useful tool outputs before summarizing.
+        "decision": {"mode": "auto"},  # auto | off; unavailable engines keep ordinary compression.
         # checkpoint_required: fail closed before lossy compaction unless an active memory provider
         # confirms checkpoint API compatibility and completes the checkpoint.
         "checkpoint_required": False,

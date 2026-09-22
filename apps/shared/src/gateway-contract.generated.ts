@@ -2617,6 +2617,17 @@ export interface WakeFeedResult {
   reason?: string | null
   fed: boolean
 }
+export interface SessionExecutionModeParams {
+  session_id: string
+  profile?: string | null
+  mode?: 'auto' | 'chat' | 'agent' | null
+}
+export interface SessionExecutionModeResult {
+  available: boolean
+  policy: 'auto' | 'chat' | 'agent'
+  active: 'chat' | 'agent'
+  requested?: 'auto' | 'chat' | 'agent' | null
+}
 export interface SessionCreateParams {
   profile?: string | null
   cols?: number | null
@@ -4737,6 +4748,8 @@ export interface RpcMethods {
   'session.events.since': { params: SessionEventsSinceParams; result: SessionEventsSinceResult }
   /** Replay-buffer occupancy telemetry (ops/debug). */
   'session.events.stats': { params: SessionEventsStatsParams; result: SessionEventsStatsResult }
+  /** Read the session Chat/Agent mode or request an explicit change at the next user-turn boundary. */
+  'session.execution_mode': { params: SessionExecutionModeParams; result: SessionExecutionModeResult }
   /** Import a foreign session into this profile's history (idempotent per origin). */
   'session.foreign.import': { params: SessionForeignIdParams; result: SessionForeignImportResult }
   /** One page of Claude Code / Codex sessions found on the serving backend. */
@@ -5024,6 +5037,7 @@ export const RPC_METHODS = [
   'session.delete',
   'session.events.since',
   'session.events.stats',
+  'session.execution_mode',
   'session.foreign.import',
   'session.foreign.list',
   'session.foreign.preview',

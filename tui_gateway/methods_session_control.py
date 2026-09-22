@@ -397,6 +397,35 @@ def _dispatch_envelope(response: dict) -> dict:
     }
 
 
+@method('session.execution_mode')
+@_profile_scoped
+def _execution_mode(rid, params: dict) -> dict:
+    from agent.conversation_mode import eligible, mode_state, request_mode
+    session, err = _sess(params, rid)
+    if err:
+        return err
+    agent = session['agent']
+    if not eligible(agent):
+        return _ok(rid, {'available': False, 'policy': 'agent', 'active': 'agent', 'requested': None})
+    with session['history_lock']:
+        requested = params.get('mode')
+        if requested is not None:
+            if session.get('running'):
+                return _err(rid, 4023, 'Wait for the current turn to finish before changing mode')
+            try:
+                state = request_mode(agent, requested)
+            except ValueError as exc:
+                return _err(rid, 4002, str(exc))
+        else:
+            state = mode_state(agent)
+            state['requested'] = getattr(agent, '_conversation_mode_requested', None)
+            db = getattr(agent, '_session_db', None)
+            if db and not state['requested']:
+                state['requested'] = db.get_session_model_config_value(
+                    agent.session_id, 'conversation_mode_requested')
+    return _ok(rid, {'available': True, **state})
+
+
 def register(server) -> None:
     """Rebind this module's handlers onto the server namespace."""
     bind_module(globals(), server, skip=("_",))

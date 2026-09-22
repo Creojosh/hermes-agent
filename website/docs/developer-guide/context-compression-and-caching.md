@@ -7,6 +7,18 @@ Source files: `agent/context_engine.py` (ABC), `agent/context_compressor.py` (de
 `agent/prompt_caching.py`, `gateway/run_turn.py` (session hygiene), `agent/compression_facade.py` (search for `_compress_context`)
 
 
+## Explicit conversation mode boundaries
+
+`agent/conversation_mode.py` selects lightweight Chat or the existing Agent loop
+for interactive llama.cpp sessions. Each mode keeps a stable system prefix.
+Auto may promote Chat to Agent only between admitted user turns, under the existing
+session lease. Once promoted, Agent is sticky; an explicit mode request is queued
+until the next turn. This deliberate prefix change is separate from compression.
+The prompt hash, tool names and mode state commit together in SessionDB without
+changing the session ID or transcript. Interrupted classification commits nothing.
+Decision requests use their own stable instructions and schema and never enter the
+conversation history. Logical prefixes do not guarantee separate resident KV slots.
+
 ## Bedrock context window cache
 
 Bedrock context resolution in `agent/model_metadata.py` uses this precedence:

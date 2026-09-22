@@ -64,6 +64,37 @@ region in both legacy and lean modes. Run it directly or via pytest.
 
 ## Policies
 
+### Loaded llama.cpp decision engine
+
+`llama_decision` exercises the production selector (including its five-second
+budget and ordinary-summary fallback). `llama_summary` is the matched control:
+both use the specified loaded model and context window. Existing recall questions,
+answer scoring and token/latency reporting apply to both arms.
+
+```bash
+python -m evals.compaction.runner --transcript transcript.json --out results/llama-cold \
+  --policies llama_summary,llama_decision --decision-base-url http://127.0.0.1:8096/v1 \
+  --decision-model my-loaded-model --decision-context-length 65536
+```
+
+An authenticated server reads its credential from `LLAMA_API_KEY` (or the variable
+named by `--decision-key-env`). Keep `compression.decision.mode: auto` in the test
+profile. The question/answer/judge calls use the eval runner's configured provider;
+use synthetic transcripts when testing outside your local environment.
+
+For a cold decision-prefix measurement, restart the test server and warm only chat
+before the first run. Repeat with a new output directory without restarting for a
+warm measurement. Also record server RSS/GPU memory and a fixed chat request before
+and after each run, using the same loaded model. Run once against the direct child
+endpoint and once against the router; do not load another model for the comparison.
+`decision_selected: false` means fallback, not successful selective compression.
+
+For a small synthetic protocol/latency/residency receipt without a judge or real
+conversation data, run `python -m evals.compaction.scripts.llama_decision_probe
+--base-url http://127.0.0.1:8096/v1 --model my-loaded-model --out probe.json`.
+Supply `--server-pid` for RSS measurements. The probe refuses unloaded models.
+
+
 Defined in `policies.py`. Each policy maps to `ContextCompressor` constructor
 kwargs plus optional attribute overrides applied post-construction (e.g.
 `tail_token_budget`). Add new policies there — the runner picks them up by

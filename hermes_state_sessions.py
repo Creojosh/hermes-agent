@@ -667,6 +667,22 @@ class SessionSessionsMixin:
         payload = json.dumps(list(tool_names)) if tool_names is not None else None
         self._write_sql("UPDATE sessions SET tool_names = ? WHERE id = ?", (payload, session_id))
 
+    def update_session_conversation_mode(self, session_id: str, state: Dict[str, str],
+                                         system_prompt: str, tool_names: List[str]) -> None:
+        """Commit an admitted mode boundary without changing transcript or session identity."""
+        def _do(conn):
+            merged = self._merge_model_config_json(conn, session_id, {
+                'conversation_mode': state, 'conversation_mode_requested': None,
+            }, on_missing='raise')
+            prompt_hash = self._store_system_prompt(conn, system_prompt)
+            conn.execute(
+                'UPDATE sessions SET model_config = ?, system_prompt_hash = ?, system_prompt = NULL, '
+                'tool_names = ? WHERE id = ?',
+                (merged, prompt_hash, json.dumps(tool_names), session_id),
+            )
+            self._delete_unreferenced_system_prompts(conn)
+        self._execute_write(_do)
+
     def update_session_model(self, session_id: str, model: str, provider: Optional[str] = None) -> None:
         """Set the model after a mid-session /model switch (unconditionally), null system_prompt so
         stale Model:/Provider: footers rebuild, and drop any Browser runtime lock (lineage markers

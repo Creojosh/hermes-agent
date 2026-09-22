@@ -188,6 +188,79 @@ shows only detected models instead of the curated recommendations. Selecting a
 local model as your main model uses the standard `model.provider: llamacpp` +
 `model.default` settings — the same shape as every other provider.
 
+## Selective context compression with a compatible fork
+
+Hermes can use the loaded model's `POST /v1/decision` endpoint to clear obsolete
+tool outputs during automatic compression. When the remaining context meets the
+compression target, useful content stays verbatim and no summary is generated.
+Otherwise Hermes runs its normal compression on the original history.
+
+This requires a build supporting the
+[parallel-decision API](https://github.com/thecodacus/llama.cpp/tree/parallel-decision/tools/parallel-decision).
+It does not install TypeSafe Jev or replace the official runtime download.
+For a supplied fork binary, use the existing settings:
+
+```yaml
+local_runtime:
+  runtime_path: /path/to/directory/containing/llama-server
+  extra_args: ["--decision-seqs", "12"]
+compression:
+  decision:
+    mode: auto  # auto | off
+```
+
+Preserve any other `extra_args` you already use. Start an external server with the
+same decision flag and configure its endpoint normally. The fork requires at least
+three decision sequences; additional sequences consume model-dependent memory,
+especially with sliding-window or recurrent attention. Twelve is an example,
+not a universal optimum. Runtime flag changes take effect on the next server start.
+
+Hermes uses the session's endpoint, model and credentials. It sends batches only
+at the compression boundary, with a five-second total budget. Unsupported servers,
+invalid responses, insufficient savings and timeouts retain normal compression.
+An output is cleared only on a discard decision with probability at least 0.90;
+this score is not a calibrated guarantee. Recent turns, instructional skills and
+tool-call structure are protected. Focused/manual compression and custom context
+engines retain their existing behavior. No chat `/decision` command is added.
+
+Set `compression.decision.mode: off` to disable selection. Capability answers are
+cached for five minutes per profile, endpoint, model and session client identity;
+reconnecting or switching routes rechecks capability. No prompt contents or
+credentials are written to decision diagnostics.
+
+## Lightweight Chat and Agent modes
+
+New interactive llama.cpp conversations default to `agent.conversation_mode: auto`.
+While in Auto/Chat, a bounded `/v1/decision` request classifies each incoming user
+request on the same loaded model. Self-contained questions use a short Chat prompt,
+without tool schemas, execution instructions or the skill catalog. Identity,
+user preferences, history, streaming, storage and compression remain available.
+Chat cannot execute tools, including tool calls fabricated by the model.
+
+Requests needing tools promote the session to Agent between turns. Agent keeps its
+existing tool loop and Tool Search; no classifier runs between tool calls. Promotion
+is sticky across restarts. Existing conversations and canonical Bot Chat sessions
+retain Agent. Unsupported decisions, uncertainty or the two-second routing deadline
+fall back to Agent. Other providers retain their existing behavior.
+
+In Desktop, the composer exposes **Auto**, **Chat**, and **Agent** for supported
+sessions. An explicit selection takes effect on the next request. `Chat` forces
+text-only conversation; `Agent` bypasses routing. The profile configuration controls
+the default for new sessions:
+
+```yaml
+agent:
+  conversation_mode: auto  # auto | chat | agent
+```
+
+Decision, Chat and Agent have separate stable prompt prefixes. A promotion or
+explicit mode change is a deliberate cache boundary; it preserves session identity
+and history without duplicating messages. These logical prefixes do not reserve
+three KV caches: actual cache residency depends on llama.cpp slots and memory.
+Chat reduces input tokens, but routing adds latency and the first Agent request
+must process its new prefix. Measure end-to-end latency with cold and warm caches
+before assuming a speed or memory benefit.
+
 ## Requirements and limits
 
 - **Windows and Linux:** NVIDIA GPU (CUDA) or CPU. **macOS:** Apple

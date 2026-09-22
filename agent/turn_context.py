@@ -512,6 +512,8 @@ def _refresh_mcp_tools_between_turns(agent: Any) -> None:
     """Late-connecting MCP servers land in THIS turn's snapshot, before the first API
     call assembles ``tools=``. ``preserve_prefix`` keeps the tool array append-only so a
     flapping ``check_fn`` can't fork the cache."""
+    if getattr(agent, '_conversation_mode_state', {}).get('active') == 'chat':
+        return
     try:
         # An authorization that committed after its connection card closed: same import-cost gate,
         # the module is loaded only in a process that ran a connection operation.
@@ -1064,6 +1066,8 @@ def build_turn_context(
 
     # Preserve the original user message (no nudge injection).
     original_user_message = persist_user_message if persist_user_message is not None else user_message
+    from agent.conversation_mode import prepare_mode_turn, persist_mode_boundary
+    prepare_mode_turn(agent, user_message, conversation_history, system_message, force_agent=bool(moa_active))
     should_review_memory = _tick_memory_nudge(agent)
     _emit_reaction(agent, original_user_message)
 
@@ -1083,11 +1087,13 @@ def build_turn_context(
     try:
         from tools.bot_mode_dm import ensure_message_agent_tool
 
-        ensure_message_agent_tool(agent)
+        if getattr(agent, '_conversation_mode_state', {}).get('active') != 'chat':
+            ensure_message_agent_tool(agent)
     except Exception:
         logger.debug("message_agent injection skipped", exc_info=True)
 
     _ensure_session_row(agent, pending_cli_message)
+    persist_mode_boundary(agent)
 
     # A turn interrupted before admission could not write its accepted input because
     # it did not own the session lease. Persist that carried-forward row now, before
@@ -1121,7 +1127,8 @@ def build_turn_context(
     )
 
     _bind_interrupt_scope(agent, ra)
-    ext_prefetch_cache = _memory_turn_start_and_prefetch(agent, original_user_message, turn_author)
+    ext_prefetch_cache = ('' if getattr(agent, '_conversation_mode_state', {}).get('active') == 'chat'
+                          else _memory_turn_start_and_prefetch(agent, original_user_message, turn_author))
 
     # Title the session now: titling depends only on the user's ask (before any injected
     # context lands on list content), so it runs concurrently with the turn. Daemon thread,

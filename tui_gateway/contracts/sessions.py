@@ -5,6 +5,8 @@ listing/browsing stored rows, spawn-tree snapshots, event replay and the statele
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from .base import JsonValue, Params, Result, WireEnum
@@ -12,6 +14,21 @@ from .common import (OpenModel, PendingApproval, ProfileParams, SessionLiveInfo,
                      Usage)
 from .connectors_operation import ConnectionRequestPayload
 from .registry import method
+
+
+class SessionExecutionModeParams(SessionParams):
+    mode: Literal['auto', 'chat', 'agent'] | None = None
+
+
+class SessionExecutionModeResult(Result):
+    available: bool
+    policy: Literal['auto', 'chat', 'agent']
+    active: Literal['chat', 'agent']
+    requested: Literal['auto', 'chat', 'agent'] | None = None
+
+
+method('session.execution_mode', params=SessionExecutionModeParams, result=SessionExecutionModeResult,
+       doc='Read the session Chat/Agent mode or request an explicit change at the next user-turn boundary.')
 
 
 # ── shared live-session snapshot ──────────────────────────────────────────────────────────────
