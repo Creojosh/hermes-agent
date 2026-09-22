@@ -366,6 +366,7 @@ def test_custom_runtime_folder_is_saved_and_probed(client, tmp_path, monkeypatch
             "llama.cpp custom\n" if "--version" in command
             else "----- common params -----\n  -c,  --ctx-size N  context size\n"
             "  --flash-attn [on|off|auto]  flash attention\n"
+            "  -sm, --split-mode {none,layer,row,tensor}\n"
         )
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
@@ -376,6 +377,11 @@ def test_custom_runtime_folder_is_saved_and_probed(client, tmp_path, monkeypatch
     assert response.status_code == 200
     options = response.json()["capabilities"]["options"]
     assert options[0] == {"flags": ["-c", "--ctx-size"], "value": "N", "description": "context size"}
+    assert options[2] == {
+        "flags": ["-sm", "--split-mode"],
+        "value": "{none,layer,row,tensor}",
+        "description": "",
+    }
     assert all(option["flags"] != ["-----"] for option in options)
     status = client.get("/api/local-models/status").json()
     assert status["runtime_backend"] == "custom"

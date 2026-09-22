@@ -517,7 +517,8 @@ def _parse_help_option(line: str) -> Dict[str, Any] | None:
     value_and_description = re.match(r"^\s+(\S+)\s{2,}(.*)$", tail)
     if value_and_description is not None:
         value, description = value_and_description.groups()
-    elif description and re.fullmatch(r"(?:[A-Z][A-Z0-9_-]*|<[^>]+>|\[[^]]+\])", description):
+    elif description and re.fullmatch(
+            r"(?:[A-Z][A-Z0-9_-]*|<[^>]+>|\[[^]]+\]|\{[^}]+\})", description):
         value, description = description, ""
     return {"flags": flags, "value": value, "description": description.strip()}
 
