@@ -67,6 +67,36 @@ class ModelsDirectoryBody(BaseModel):
     path: str = ""                # empty -> <default HERMES_HOME>/models
 
 
+class ModelSettingsBody(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+@router.get("/api/local-models/models/{model_id}/settings")
+def local_model_settings(model_id: str):
+    from hermes_cli.local_runtime.model_settings import FIELDS, get_model_settings, global_model_settings
+
+    if model_id not in bootstrap.staged_model_ids():
+        raise HTTPException(404, "Model is not in the local library")
+    return {"values": get_model_settings(model_id), "inherited": global_model_settings(), "fields": [
+        {"key": key, "group": spec[0], "kind": spec[1], "min": spec[2], "choices": spec[3]}
+        for key, spec in FIELDS.items()]}
+
+
+@router.post("/api/local-models/models/{model_id}/settings")
+def configure_local_model_settings(model_id: str, body: ModelSettingsBody):
+    from hermes_cli.local_runtime.model_settings import save_model_settings
+
+    if model_id not in bootstrap.staged_model_ids():
+        raise HTTPException(404, "Model is not in the local library")
+    with _http_error(400), _CONFIG_MUTATION_LOCK:
+        save_model_settings(model_id, body.values)
+    running = bootstrap.get_supervisor() is not None or _state_endpoint() is not None
+    restarted = bootstrap.refresh_local_runtime() if running else False
+    if running and not restarted:
+        raise HTTPException(502, "Settings saved, but the local server could not restart")
+    return {"ok": True, "restarted": restarted}
+
+
 class ModelDownloadBody(BaseModel):
     model_id: str
 

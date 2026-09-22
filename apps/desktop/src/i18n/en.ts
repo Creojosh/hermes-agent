@@ -1477,6 +1477,26 @@ export const en: Translations = {
       }
     },
     localModels: {
+      parameters: {
+        title: 'Model parameters',
+        detail: 'Blank values use existing defaults. Overrides apply only to this model, across all profiles.',
+        search: 'Search parameters…',
+        gpu: 'GPU & distribution',
+        context: 'Context & processing',
+        cache: 'KV cache & attention',
+        sampling: 'Sampling',
+        penalties: 'Repetition & DRY penalties',
+        rope: 'RoPE & YaRN context scaling',
+        speculative: 'Speculative decoding (requires compatible model)',
+        vision: 'Vision token limits',
+        inherit: 'Inherit / automatic',
+        reset: 'Reset overrides',
+        save: 'Save parameters',
+        restart: 'Saving restarts the running local server and unloads resident models.',
+        global: 'Global options · advanced',
+        globalDetail: 'These options affect the entire server. Use model parameters for individual tuning.',
+        removeUnknown: 'Remove unrecognized arguments'
+      },
       title: 'Local Models',
       runtimeTitle: 'Local runtime',
       runtimeReady: backend => `Ready · ${backend}`,

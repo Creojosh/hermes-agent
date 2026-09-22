@@ -61,6 +61,7 @@ import type {
   LocalRuntimeOption
 } from '@/types/hermes'
 
+import { LocalModelParameters } from './local-model-parameters'
 import { ListRow, Pill, SettingsContent, SettingsSection, SettingsSkeleton } from './primitives'
 import { ActiveProfileNote } from './profile-scope'
 
@@ -111,7 +112,7 @@ function usableRuntimeOptions(options: LocalRuntimeOption[]): LocalRuntimeOption
   for (const option of options) {
     const flags = option.flags.filter(flag => /^--?[a-zA-Z0-9]/.test(flag))
 
-    if (!flags.length) {
+    if (!flags.length || flags.some(flag => ['--help', '--version', '--cache-list', '--completion-bash'].includes(flag))) {
       continue
     }
 
@@ -137,6 +138,7 @@ function decodeRuntimeArgs(args: string[], options: LocalRuntimeOption[]) {
 
     if (!option) {
       unknown.push(args[index])
+
       continue
     }
 
@@ -189,6 +191,7 @@ export function LocalModelsSettings() {
   const [deleting, setDeleting] = useState<null | string>(null)
   const [modelsDirectorySaving, setModelsDirectorySaving] = useState(false)
   const [visionSaving, setVisionSaving] = useState<null | string>(null)
+  const [parametersModel, setParametersModel] = useState<string | null>(null)
   const [serverBusy, setServerBusy] = useState(false)
   // Advanced configuration is the front door: no model or runtime choice is imposed.
   const [configure, setConfigure] = useState(true)
@@ -404,11 +407,13 @@ export function LocalModelsSettings() {
 
       if (paths[0]) {
         setRuntimePathDraft(paths[0])
+
         const args = encodeRuntimeArgs(
           usableRuntimeOptions(runtimeCapabilities?.options ?? []),
           runtimeSelections,
           runtimeUnknownArgs
         )
+
         const capabilities = await getLocalRuntimeCapabilities(paths[0])
         const decoded = decodeRuntimeArgs(args, usableRuntimeOptions(capabilities.options))
         setRuntimeCapabilities(capabilities)
@@ -429,6 +434,7 @@ export function LocalModelsSettings() {
         runtimeSelections,
         runtimeUnknownArgs
       )
+
       const result = await configureLocalRuntime(runtimePathDraft, extraArgs)
       setRuntimeCapabilities(result.capabilities)
       notify({ durationMs: 3_000, kind: 'success', message: 'Runtime configuration saved.', title: copy.title })
@@ -513,13 +519,18 @@ export function LocalModelsSettings() {
   const sortedCatalog = catalog
     .filter(model => !status.models_dir_custom || model.downloaded)
     .sort((a, b) => fitRank(a) - fitRank(b))
+
   const detectedRuntimeOptions = usableRuntimeOptions(runtimeCapabilities?.options ?? [])
+
   const visibleRuntimeOptions = detectedRuntimeOptions.filter(option => {
     const haystack = `${option.flags.join(' ')} ${option.value} ${option.description}`.toLowerCase()
+
     return haystack.includes(runtimeOptionQuery.trim().toLowerCase())
   })
+
   const runtimeHasIncompleteValues = detectedRuntimeOptions.some(option => {
     const flag = runtimeOptionFlag(option)
+
     return option.value && flag in runtimeSelections && !String(runtimeSelections[flag]).trim()
   })
 
@@ -769,100 +780,112 @@ export function LocalModelsSettings() {
           title="Runtime directory"
         />
 
-        <ListRow
-          action={
-            <Button
-              disabled={runtimeSaving || runtimeHasIncompleteValues}
-              onClick={() => void saveRuntimeConfiguration()}
-              size="sm"
-            >
-              {runtimeSaving ? <Loader2 className="animate-spin" /> : <Check />}
-              Save
-            </Button>
-          }
-          below={
-            runtimeCapabilities?.executable ? (
-              <div className="mt-2 grid gap-2">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    aria-label="Search llama.cpp options"
-                    className="pl-8"
-                    onChange={event => setRuntimeOptionQuery(event.target.value)}
-                    placeholder="Search options…"
-                    value={runtimeOptionQuery}
-                  />
-                </div>
+        <details>
+          <summary className="cursor-pointer text-sm font-medium">{copy.parameters.global}</summary>
+          <p className="mt-2 text-xs text-muted-foreground">{copy.parameters.globalDetail}</p>
+          <ListRow
+            action={
+              <Button
+                disabled={runtimeSaving || runtimeHasIncompleteValues}
+                onClick={() => void saveRuntimeConfiguration()}
+                size="sm"
+              >
+                {runtimeSaving ? <Loader2 className="animate-spin" /> : <Check />}
+                Save
+              </Button>
+            }
+            below={
+              runtimeCapabilities?.executable ? (
+                <div className="mt-2 grid gap-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      aria-label="Search llama.cpp options"
+                      className="pl-8"
+                      onChange={event => setRuntimeOptionQuery(event.target.value)}
+                      placeholder="Search options…"
+                      value={runtimeOptionQuery}
+                    />
+                  </div>
 
-                <div className="max-h-80 overflow-auto rounded-md border border-(--ui-border)">
-                  {visibleRuntimeOptions.map(option => {
-                    const flag = runtimeOptionFlag(option)
-                    const enabled = flag in runtimeSelections
-                    const value = typeof runtimeSelections[flag] === 'string' ? runtimeSelections[flag] : ''
+                  <div className="max-h-80 overflow-auto rounded-md border border-(--ui-border)">
+                    {visibleRuntimeOptions.map(option => {
+                      const flag = runtimeOptionFlag(option)
+                      const enabled = flag in runtimeSelections
+                      const value = typeof runtimeSelections[flag] === 'string' ? runtimeSelections[flag] : ''
 
-                    return (
-                      <label
-                        className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_minmax(8rem,12rem)] items-center gap-2 border-b border-(--ui-border) px-2.5 py-2 last:border-b-0 hover:bg-(--ui-bg-tertiary)"
-                        key={flag}
-                      >
-                        <input
-                          checked={enabled}
-                          className="size-3.5 accent-primary"
-                          onChange={event => toggleRuntimeOption(option, event.target.checked)}
-                          type="checkbox"
-                        />
-                        <span className="min-w-0">
-                          <code className="text-[0.72rem] font-medium text-foreground">{option.flags.join(', ')}</code>
-                          {option.description && (
-                            <span className="mt-0.5 block text-[0.68rem] leading-4 text-muted-foreground">
-                              {option.description}
+                      return (
+                        <label
+                          className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_minmax(8rem,12rem)] items-center gap-2 border-b border-(--ui-border) px-2.5 py-2 last:border-b-0 hover:bg-(--ui-bg-tertiary)"
+                          key={flag}
+                        >
+                          <input
+                            checked={enabled}
+                            className="size-3.5 accent-primary"
+                            onChange={event => toggleRuntimeOption(option, event.target.checked)}
+                            type="checkbox"
+                          />
+                          <span className="min-w-0">
+                            <code className="text-[0.72rem] font-medium text-foreground">
+                              {option.flags.join(', ')}
+                            </code>
+                            {option.description && (
+                              <span className="mt-0.5 block text-[0.68rem] leading-4 text-muted-foreground">
+                                {option.description}
+                              </span>
+                            )}
+                          </span>
+                          {option.value ? (
+                            <Input
+                              aria-label={`Value for ${flag}`}
+                              disabled={!enabled}
+                              onChange={event =>
+                                setRuntimeSelections(current => ({ ...current, [flag]: event.target.value }))
+                              }
+                              onClick={event => event.stopPropagation()}
+                              placeholder={option.value}
+                              size="sm"
+                              value={value}
+                            />
+                          ) : (
+                            <span className="text-right text-[0.68rem] text-muted-foreground">
+                              {enabled ? 'Enabled' : 'Disabled'}
                             </span>
                           )}
-                        </span>
-                        {option.value ? (
-                          <Input
-                            aria-label={`Value for ${flag}`}
-                            disabled={!enabled}
-                            onChange={event =>
-                              setRuntimeSelections(current => ({ ...current, [flag]: event.target.value }))
-                            }
-                            onClick={event => event.stopPropagation()}
-                            placeholder={option.value}
-                            size="sm"
-                            value={value}
-                          />
-                        ) : (
-                          <span className="text-right text-[0.68rem] text-muted-foreground">
-                            {enabled ? 'Enabled' : 'Disabled'}
-                          </span>
-                        )}
-                      </label>
-                    )
-                  })}
+                        </label>
+                      )
+                    })}
 
-                  {visibleRuntimeOptions.length === 0 && (
-                    <p className="px-3 py-5 text-center text-xs text-muted-foreground">No matching option.</p>
+                    {visibleRuntimeOptions.length === 0 && (
+                      <p className="px-3 py-5 text-center text-xs text-muted-foreground">No matching option.</p>
+                    )}
+                  </div>
+
+                  {runtimeUnknownArgs.length > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      <code className="block break-all">{JSON.stringify(runtimeUnknownArgs)}</code>
+                      <Button onClick={() => setRuntimeUnknownArgs([])} size="sm" variant="ghost">
+                        {copy.parameters.removeUnknown}
+                      </Button>
+                      <p>
+                        {runtimeUnknownArgs.length} argument(s) not exposed by this runtime are preserved unchanged.
+                      </p>
+                    </div>
+                  )}
+                  {runtimeHasIncompleteValues && (
+                    <p className="text-[0.68rem] text-destructive">Enter a value for every enabled option.</p>
                   )}
                 </div>
-
-                {runtimeUnknownArgs.length > 0 && (
-                  <p className="text-[0.68rem] text-amber-700 dark:text-amber-300">
-                    {runtimeUnknownArgs.length} argument(s) not exposed by this runtime are preserved unchanged.
-                  </p>
-                )}
-                {runtimeHasIncompleteValues && (
-                  <p className="text-[0.68rem] text-destructive">Enter a value for every enabled option.</p>
-                )}
-              </div>
-            ) : (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Install a runtime or choose a llama.cpp folder to detect its available controls.
-              </p>
-            )
-          }
-          description="Enable an option, then enter only its value. Controls come directly from llama-server --help."
-          title="llama.cpp options"
-        />
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Install a runtime or choose a llama.cpp folder to detect its available controls.
+                </p>
+              )
+            }
+            description="Enable an option, then enter only its value. Controls come directly from llama-server --help."
+            title="llama.cpp options"
+          />
+        </details>
 
         {runtimeCapabilities?.executable && (
           <details className="rounded-md border border-(--ui-border) px-3 py-2 text-xs">
@@ -989,6 +1012,11 @@ export function LocalModelsSettings() {
                 action={
                   model.downloaded ? (
                     <div className="flex items-center justify-end gap-2">
+                      {activateTarget && (
+                        <Button onClick={() => setParametersModel(activateTarget)} size="sm" variant="outline">
+                          {copy.parameters.title}
+                        </Button>
+                      )}
                       {stagedModel?.vision_available && (
                         <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                           <input
@@ -1188,6 +1216,9 @@ export function LocalModelsSettings() {
                 <ListRow
                   action={
                     <div className="flex items-center justify-end gap-2">
+                      <Button onClick={() => setParametersModel(m.id)} size="sm" variant="outline">
+                        {copy.parameters.title}
+                      </Button>
                       {m.vision_available && (
                         <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                           <input
@@ -1274,6 +1305,14 @@ export function LocalModelsSettings() {
       </SettingsSection>
 
       <BrowseSection onChanged={refresh} />
+      {parametersModel && (
+        <LocalModelParameters
+          key={parametersModel}
+          modelId={parametersModel}
+          onClose={() => setParametersModel(null)}
+          onSaved={refresh}
+        />
+      )}
     </SettingsContent>
   )
 }

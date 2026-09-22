@@ -1306,6 +1306,26 @@ export const zhHant = defineLocale({
       }
     },
     localModels: {
+      parameters: {
+        title: '模型參數',
+        detail: '留空使用預設值。此模型的覆寫值在所有設定檔中共用。',
+        search: '搜尋參數…',
+        gpu: 'GPU 與分配',
+        context: '上下文與處理',
+        cache: 'KV 快取與注意力',
+        sampling: '取樣',
+        penalties: '重複與 DRY 懲罰',
+        rope: 'RoPE 與 YaRN 上下文縮放',
+        speculative: '推測解碼（需要相容模型）',
+        vision: '影像 Token 限制',
+        inherit: '繼承 / 自動',
+        reset: '重設覆寫值',
+        save: '儲存參數',
+        restart: '儲存會重新啟動運行中的伺服器並卸載模型。',
+        global: '全域選項 · 進階',
+        globalDetail: '此處影響整個伺服器。個別模型請使用模型參數。',
+        removeUnknown: '移除未知參數'
+      },
       title: '本地模型',
       runtimeTitle: '本地執行環境',
       runtimeReady: backend => `就緒 · ${backend}`,

@@ -423,6 +423,7 @@ def ensure_local_runtime(config: dict, force: bool = False) -> "object | None":
                 default_tag, ensure_runtime_installed, installed_tags, select_backend,
                 server_binary)
             from hermes_cli.local_runtime.supervisor import LlamaServerSupervisor
+            from hermes_cli.local_runtime.model_settings import split_model_args
 
             custom_runtime = str(section.get("runtime_path") or "").strip()
             backend = section.get("backend", "auto")
@@ -459,7 +460,7 @@ def ensure_local_runtime(config: dict, force: bool = False) -> "object | None":
                                         models_max=_admitted_models_max(
                                             mdir, int(section.get("models_max", 4))),
                                         port=int(section.get("port", 0)) or None,
-                                        extra_args=[str(arg) for arg in section.get("extra_args") or []])
+                                        extra_args=split_model_args([str(arg) for arg in section.get("extra_args") or []])[1])
             try:
                 sup.start()
             except Exception:

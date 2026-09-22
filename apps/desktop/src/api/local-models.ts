@@ -8,6 +8,36 @@ import type {
 
 import { hermesApi, profileScoped } from './client'
 
+export interface ModelSettingsField {
+  key: string
+  group: 'gpu' | 'context' | 'cache' | 'sampling' | 'penalties' | 'rope' | 'speculative' | 'vision'
+  kind: string
+  min: number | null
+  choices: string[] | null
+}
+
+export interface ModelSettingsResponse {
+  values: Record<string, string>
+  inherited: Record<string, string>
+  fields: ModelSettingsField[]
+}
+
+export function getLocalModelSettings(modelId: string): Promise<ModelSettingsResponse> {
+  return hermesApi<ModelSettingsResponse>({
+    ...profileScoped(),
+    path: `/api/local-models/models/${encodeURIComponent(modelId)}/settings`
+  })
+}
+
+export function saveLocalModelSettings(modelId: string, values: Record<string, string>): Promise<{ ok: boolean }> {
+  return hermesApi<{ ok: boolean }>({
+    ...profileScoped(),
+    path: `/api/local-models/models/${encodeURIComponent(modelId)}/settings`,
+    method: 'POST',
+    body: { values }
+  })
+}
+
 // The desktop surface of the managed llama.cpp runtime: status/catalog
 // reads, download/install/activate jobs, and server control.
 

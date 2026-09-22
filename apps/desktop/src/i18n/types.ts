@@ -1243,6 +1243,26 @@ export interface Translations {
       tasks: Record<string, AuxTaskCopy>
     }
     localModels: {
+      parameters: {
+        title: string
+        detail: string
+        search: string
+        gpu: string
+        context: string
+        cache: string
+        sampling: string
+        penalties: string
+        rope: string
+        speculative: string
+        vision: string
+        inherit: string
+        reset: string
+        save: string
+        restart: string
+        global: string
+        globalDetail: string
+        removeUnknown: string
+      }
       title: string
       runtimeTitle: string
       runtimeReady: (backend: string) => string

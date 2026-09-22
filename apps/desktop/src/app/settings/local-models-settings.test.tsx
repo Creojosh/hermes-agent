@@ -332,6 +332,7 @@ describe('LocalModelsSettings', () => {
     })
     await renderFullPane()
 
+    fireEvent.click(screen.getByText('Global options · advanced'))
     const search = screen.getByRole('textbox', { name: 'Search llama.cpp options' })
     fireEvent.change(search, { target: { value: 'not-an-option' } })
     expect(screen.getByText('No matching option.')).toBeTruthy()

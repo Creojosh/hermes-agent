@@ -1672,6 +1672,26 @@ export const zh = defineLocale({
       }
     },
     localModels: {
+      parameters: {
+        title: '模型参数',
+        detail: '留空使用默认值。此模型的覆盖值在所有配置中共享。',
+        search: '搜索参数…',
+        gpu: 'GPU 与分配',
+        context: '上下文与处理',
+        cache: 'KV 缓存与注意力',
+        sampling: '采样',
+        penalties: '重复与 DRY 惩罚',
+        rope: 'RoPE 与 YaRN 上下文缩放',
+        speculative: '推测解码（需要兼容模型）',
+        vision: '图像 Token 限制',
+        inherit: '继承 / 自动',
+        reset: '重置覆盖值',
+        save: '保存参数',
+        restart: '保存会重启正在运行的本地服务器并卸载驻留模型。',
+        global: '全局选项 · 高级',
+        globalDetail: '此处影响整个服务器。单个模型请使用模型参数。',
+        removeUnknown: '移除未知参数'
+      },
       title: '本地模型',
       runtimeTitle: '本地运行时',
       runtimeReady: backend => `就绪 · ${backend}`,

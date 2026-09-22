@@ -1284,6 +1284,26 @@ export const ja = defineLocale({
       }
     },
     localModels: {
+      parameters: {
+        title: 'モデル設定',
+        detail: '空欄は既定値を使用します。このモデルの設定は全プロファイルで共有されます。',
+        search: '設定を検索…',
+        gpu: 'GPU と分散',
+        context: 'コンテキストと処理',
+        cache: 'KV キャッシュとアテンション',
+        sampling: 'サンプリング',
+        penalties: '繰り返し・DRY ペナルティ',
+        rope: 'RoPE・YaRN コンテキスト拡張',
+        speculative: '投機的デコード（対応モデルが必要）',
+        vision: '画像トークンの上限と下限',
+        inherit: '継承 / 自動',
+        reset: '設定をリセット',
+        save: '設定を保存',
+        restart: '保存すると稼働中のサーバーを再起動し、モデルを解放します。',
+        global: 'グローバル設定 · 詳細',
+        globalDetail: 'ここはサーバー全体に適用されます。個別の調整はモデル設定を使用してください。',
+        removeUnknown: '不明な引数を削除'
+      },
       title: 'ローカルモデル',
       runtimeTitle: 'ローカルランタイム',
       runtimeReady: backend => `準備完了 · ${backend}`,

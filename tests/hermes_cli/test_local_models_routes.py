@@ -122,7 +122,7 @@ def test_status_reports_total_size_for_split_model(client, tmp_path, monkeypatch
     response = client.get("/api/local-models/status")
 
     assert response.status_code == 200
-    assert response.json()["models"][0]["size_bytes"] == 2048
+    assert response.json()["models"][0]["size_bytes"] == sum(path.stat().st_size for path in tmp_path.glob("*.gguf"))
 
 
 def test_status_tracks_preset_spill_and_restored_window(client, tmp_path, monkeypatch):
@@ -354,6 +354,22 @@ def test_delete_model(client):
 
 
 # ── runtime install ──────────────────────────────────────────
+
+
+def test_per_model_settings_route_persists_and_rejects_invalid_values(client, monkeypatch):
+    from hermes_cli.local_runtime import bootstrap
+
+    _write_fake_gguf(bootstrap.models_dir() / "Configurable.gguf")
+    monkeypatch.setattr(bootstrap, "get_supervisor", lambda: None)
+    monkeypatch.setattr("hermes_cli.web_routers.local_models._state_endpoint", lambda: None)
+    path = "/api/local-models/models/Configurable/settings"
+    values = {"split-mode": "tensor", "tensor-split": "2,1"}
+    assert client.post(path, json={"values": values}).status_code == 200
+    assert client.get(path).json()["values"] == values
+    assert client.post(path, json={"values": {"port": "8000"}}).status_code == 400
+    assert client.get(path).json()["values"] == values
+    assert client.post(path, json={"values": {}}).status_code == 200
+    assert client.get(path).json()["values"] == {}
 
 
 def test_custom_runtime_folder_is_saved_and_probed(client, tmp_path, monkeypatch):

@@ -78,6 +78,23 @@ def _draft_fits(path: Path, profile, budget: HardwareBudget, window: int, overhe
 
 def preset_for_model(gguf: Path, budget: HardwareBudget,
                      mtp_capable: set[str], *, requested_window: int | None = None) -> PresetEntry | None:
+    from hermes_cli.local_runtime.model_settings import get_model_settings, global_model_settings, validate_settings
+
+    overrides = {**global_model_settings(), **validate_settings(get_model_settings(model_id_from_stem(gguf.stem)))}
+    if "ctx-size" in overrides:
+        requested_window = int(overrides["ctx-size"])
+    entry = _automatic_preset_for_model(gguf, budget, mtp_capable, requested_window=requested_window)
+    if entry is not None and entry.keys is not None:
+        entry.keys.update(overrides)
+        entry.window = int(entry.keys.get("ctx-size", entry.window))
+        # Explicit GPU placement replaces automatic tensor offloading.
+        if {"n-gpu-layers", "split-mode", "tensor-split", "n-cpu-moe"} & overrides.keys():
+            entry.keys.pop("override-tensor", None)
+    return entry
+
+
+def _automatic_preset_for_model(gguf: Path, budget: HardwareBudget,
+                     mtp_capable: set[str], *, requested_window: int | None = None) -> PresetEntry | None:
     """The launch decision for one staged model, or None when its header is unreadable."""
     from hermes_cli.local_runtime.bootstrap import model_vision_enabled, vision_projector_for
     from hermes_cli.local_runtime.catalog import entry_for_model
@@ -249,6 +266,7 @@ def read_preset_decisions(preset_path: Path | None = None) -> dict[str, PresetEn
         for section in parser.sections():
             out[section] = PresetEntry(
                 model_id=section, window=parser.getint(section, "ctx-size", fallback=0),
+                refusal=recorded.get(section, {}).get("refusal"),
                 spilled=recorded.get(section, {}).get("spilled", parser.has_option(section, "override-tensor")),
                 keys=dict(parser[section]))
     except Exception as exc:  # noqa: BLE001

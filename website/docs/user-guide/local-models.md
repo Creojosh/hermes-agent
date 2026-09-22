@@ -9,7 +9,7 @@ description: Run models entirely on your own machine — no account, no API key,
 Hermes can run open models entirely on your own machine. It downloads and
 manages the inference engine (llama.cpp), picks the right build of each
 model for your hardware, and handles memory so you never configure context
-sizes, GPU layers, or quantization. You pick a model; Hermes does the rest.
+sizes or GPU layers unless you want to override them. You pick a model; Hermes supplies defaults.
 
 Nothing leaves your computer: no account, no API key, and no network access
 after a model is downloaded.
@@ -30,6 +30,32 @@ after a model is downloaded.
 That's the whole flow. The server starts and stops with Hermes, restarts
 survive app restarts, and switching back to a cloud provider is one click
 in the model picker.
+
+## Parameters per model
+
+Use **Model parameters** beside a downloaded model to adjust GPU distribution,
+context and batch sizes, CPU threads, KV cache, flash attention, and sampling.
+Additional groups expose repetition/presence/frequency and DRY penalties, Mirostat
+and dynamic temperature, RoPE/YaRN context scaling, speculative decoding, and image
+token limits. Model loading mode, CPU MoE offloading, output token limits, and
+reasoning budget are also available. Search matches parameter names and group labels.
+Speculative decoding needs a compatible model and, for external draft modes, an
+already configured draft model. Vision limits only apply to vision models. Sampling
+and reasoning settings are server defaults; explicit values in a request take precedence.
+Blank fields inherit existing defaults; **Reset overrides**, then **Save parameters**,
+restores them. Parameters are stored per model in the machine's default configuration
+(`local_runtime.model_settings`) and shared by all profiles using that library.
+
+Explicit model values take precedence over global model defaults and generated presets.
+For example, one model can use `split-mode: tensor` and `tensor-split: 2,1` while
+another uses `split-mode: layer`. These values are written into llama.cpp's per-model
+presets; global model flags are moved into those presets so the router cannot overwrite
+individual choices. A custom context size stays fixed instead of growing automatically.
+
+Saving restarts the local server when it is running, unloading all resident models;
+they reload on demand. **Global options · advanced** holds server-wide controls and
+lets you remove unrecognized arguments explicitly. **Raw llama-server --help** remains
+available for reference.
 
 ## How Hermes picks what to download
 
@@ -56,7 +82,7 @@ what a hardware upgrade would unlock.
 ## How memory management works
 
 Local models live or die by memory placement, so Hermes manages it
-end-to-end and exposes no knobs:
+end-to-end by default; explicit per-model parameters override these defaults:
 
 - **Models start at a context window that fully fits your GPU** and grow
   toward their native maximum as your conversation needs more room. You

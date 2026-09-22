@@ -2626,6 +2626,8 @@ DEFAULT_CONFIG = {
         # Model ids whose adjacent/catalog vision projector should not be loaded. Projectors are
         # enabled by default when present; the Local Models pane owns this machine-wide toggle.
         "vision_disabled_models": [],
+        # Shared per-model llama.cpp INI values; explicit values override generated launch presets.
+        "model_settings": {},
         # Passed verbatim after Hermes' required router arguments. One list item = one argv item.
         "extra_args": [],
         "models_max": 4,  # Router process: how many models may be resident at once.
