@@ -189,6 +189,18 @@ def test_smi_resolver_caches_and_survives_empty_path(monkeypatch):
     assert len(calls) == 1
 
 
+def test_nvidia_vram_aggregates_every_visible_device(monkeypatch):
+    """The fit budget must match llama.cpp's multi-GPU device pool,
+    rather than silently pricing only CUDA0."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(hw, "_nvidia_smi_path", lambda: "nvidia-smi")
+    monkeypatch.setattr(hw.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, stdout="16303, 12117\n10240, 5228\n"))
+
+    assert hw._nvidia_vram() == ((16303 + 10240) << 20, (12117 + 5228) << 20)
+
+
 @pytest.mark.linux_only
 def test_smi_resolver_uses_wsl_driver_path_when_path_is_empty(monkeypatch):
     """WSL exposes nvidia-smi through the Windows driver directory even

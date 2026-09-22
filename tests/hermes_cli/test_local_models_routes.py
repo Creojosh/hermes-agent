@@ -144,6 +144,26 @@ def test_hardware_plain_facts(client):
     assert data["vram_total_bytes"] >= 0
     # GPU fields are None-able (non-NVIDIA machines) but must exist.
     assert "gpu_name" in data and "gpu_util_percent" in data and "vram_used_bytes" in data
+    assert isinstance(data["gpus"], list)
+
+
+def test_nvidia_facts_preserve_each_gpu_and_aggregate_the_pool(monkeypatch):
+    """Per-card identity remains visible while legacy fields describe the
+    same combined pool used for model placement."""
+    from types import SimpleNamespace
+    from hermes_cli.web_routers import local_models
+
+    monkeypatch.setattr(local_models.hardware, "_nvidia_smi_path", lambda: "nvidia-smi")
+    monkeypatch.setattr(local_models.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=0,
+        stdout=("NVIDIA GeForce RTX 5080, 100, 3861, 16303\n"
+                "NVIDIA GeForce RTX 3080, 0, 4824, 10240\n")))
+
+    facts = local_models._nvidia_smi_facts()
+    assert [gpu["name"] for gpu in facts["gpus"]] == [
+        "NVIDIA GeForce RTX 5080", "NVIDIA GeForce RTX 3080"]
+    assert facts["vram_used_bytes"] == (3861 + 4824) << 20
+    assert facts["gpu_name"] == "NVIDIA GeForce RTX 5080 + NVIDIA GeForce RTX 3080"
 
 
 # ── catalog ──────────────────────────────────────────────────

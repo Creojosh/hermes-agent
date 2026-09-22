@@ -58,9 +58,23 @@ const BASE_HARDWARE: LocalHardware = {
   ram_total_bytes: 256 * 2 ** 30,
   ram_available_bytes: 200 * 2 ** 30,
   vram_label: '32.0 GB',
-  gpu_name: 'NVIDIA GeForce RTX 5090',
+  gpu_name: 'NVIDIA GeForce RTX 5090 + NVIDIA GeForce RTX 3080',
   gpu_util_percent: 12,
-  vram_used_bytes: 6 * 2 ** 30
+  vram_used_bytes: 6 * 2 ** 30,
+  gpus: [
+    {
+      name: 'NVIDIA GeForce RTX 5090',
+      util_percent: 18,
+      vram_used_bytes: 4 * 2 ** 30,
+      vram_total_bytes: 20 * 2 ** 30
+    },
+    {
+      name: 'NVIDIA GeForce RTX 3080',
+      util_percent: 3,
+      vram_used_bytes: 2 * 2 ** 30,
+      vram_total_bytes: 12 * 2 ** 30
+    }
+  ]
 }
 
 const FITTING_MODEL: LocalCatalogModel = {
@@ -347,6 +361,7 @@ describe('LocalModelsSettings', () => {
     await renderFullPane()
 
     expect(await screen.findByText('NVIDIA GeForce RTX 5090')).toBeTruthy()
+    expect(screen.getByText('NVIDIA GeForce RTX 3080')).toBeTruthy()
     expect(screen.getByText(/32\.0 GB GPU memory/)).toBeTruthy()
     expect(screen.getByText(/256\.0 GB RAM/)).toBeTruthy()
   })

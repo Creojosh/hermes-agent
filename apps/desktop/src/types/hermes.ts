@@ -1376,6 +1376,13 @@ export interface LocalHardware {
   gpu_name: string | null
   gpu_util_percent: number | null
   vram_used_bytes: number | null
+  /** Per-device facts. Absent when connected to a runtime predating multi-GPU discovery. */
+  gpus?: {
+    name: string
+    util_percent: number
+    vram_used_bytes: number
+    vram_total_bytes: number
+  }[]
 }
 
 export interface LocalCatalogModel {

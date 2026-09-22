@@ -508,16 +508,37 @@ def local_models_status():
 
 # ── hardware: what this machine can do ───────────────────────
 def _nvidia_smi_facts() -> dict:
-    """GPU identity + live utilization (NVIDIA only; other vendors degrade to {} and the UI hides those readouts)."""
+    """All NVIDIA devices plus pool-wide live utilization.
+
+    Keep the singular fields for older desktop clients; new clients render
+    ``gpus`` so no card disappears behind GPU 0.
+    """
     smi_exe = hardware._nvidia_smi_path()
     if not smi_exe:
         return {}
-    smi = subprocess.run([smi_exe, "--query-gpu=name,utilization.gpu,memory.used", "--format=csv,noheader,nounits"],
+    smi = subprocess.run([smi_exe, "--query-gpu=name,utilization.gpu,memory.used,memory.total",
+                          "--format=csv,noheader,nounits"],
                          capture_output=True, text=True, timeout=5)
     if smi.returncode != 0 or not smi.stdout.strip():
         return {}
-    name, util, used_mib = (x.strip() for x in smi.stdout.strip().splitlines()[0].split(","))
-    return dict(gpu_name=name, gpu_util_percent=int(util), vram_used_bytes=int(used_mib) << 20)
+    gpus = []
+    for line in smi.stdout.splitlines():
+        name, util, used_mib, total_mib = (x.strip() for x in line.split(","))
+        gpus.append({
+            "name": name,
+            "util_percent": int(util),
+            "vram_used_bytes": int(used_mib) << 20,
+            "vram_total_bytes": int(total_mib) << 20,
+        })
+    total_mib = sum(gpu["vram_total_bytes"] for gpu in gpus) >> 20
+    weighted_util = (sum(gpu["util_percent"] * (gpu["vram_total_bytes"] >> 20) for gpu in gpus)
+                     // total_mib if total_mib else 0)
+    return {
+        "gpus": gpus,
+        "gpu_name": " + ".join(gpu["name"] for gpu in gpus),
+        "gpu_util_percent": weighted_util,
+        "vram_used_bytes": sum(gpu["vram_used_bytes"] for gpu in gpus),
+    }
 
 
 @router.get("/api/local-models/hardware")
@@ -528,7 +549,7 @@ def local_models_hardware():
     out = {
         "uma": budget.uma, "vram_total_bytes": budget.total_device_bytes, "vram_usable_bytes": budget.usable_vram_bytes,
         "ram_total_bytes": ram_total, "ram_available_bytes": ram_avail, "vram_label": _human_gb(budget.total_device_bytes),
-        "gpu_name": None, "gpu_util_percent": None, "vram_used_bytes": None,
+        "gpus": [], "gpu_name": None, "gpu_util_percent": None, "vram_used_bytes": None,
     }
     out.update(_quiet(_nvidia_smi_facts, {}))
     return out

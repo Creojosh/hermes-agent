@@ -5214,9 +5214,23 @@ function writeDefaultProjectDir(dir) {
 }
 
 async function createPythonBackend(root, label, backendArgs, options: any = {}) {
-  const python = await findPythonForRoot(root)
+  let python = await findPythonForRoot(root)
+  let venvRoot = python ? (venvRootForPython(python, root) ?? path.join(root, 'venv')) : null
 
-  if (!python) {
+  // A source checkout intentionally does not have to carry its own multi-GB
+  // runtime venv. Desktop's managed venv already owns the native dependencies;
+  // mount those site-packages while putting the checkout first on PYTHONPATH so
+  // `npm run dev` executes the Python files being edited, not the installed copy.
+  if (!python && options.fallbackVenvRoot) {
+    const fallbackPython = getVenvPython(options.fallbackVenvRoot)
+
+    if (fileExists(fallbackPython)) {
+      python = fallbackPython
+      venvRoot = options.fallbackVenvRoot
+    }
+  }
+
+  if (!python || !venvRoot) {
     return null
   }
 
@@ -5225,7 +5239,6 @@ async function createPythonBackend(root, label, backendArgs, options: any = {}) 
   // `venv`, and mixing the two crashes the backend on its first native
   // import (see venvRootForPython). Fall back to root/venv only for a
   // system python, where the historical layout is the best guess.
-  const venvRoot = venvRootForPython(python, root) ?? path.join(root, 'venv')
   const venvPython = getVenvPython(venvRoot)
   const command = IS_WINDOWS && fileExists(venvPython) ? venvPython : python
 
@@ -5287,7 +5300,12 @@ async function resolveHermesBackend(backendArgs) {
   //    installed `hermes` on PATH so local Python edits are actually exercised.
   //    (In dev with no checkout, SOURCE_REPO_ROOT won't pass isHermesSourceRoot.)
   if (!IS_PACKAGED && isHermesSourceRoot(SOURCE_REPO_ROOT)) {
-    const backend = await createPythonBackend(SOURCE_REPO_ROOT, `Hermes source at ${SOURCE_REPO_ROOT}`, backendArgs)
+    const backend = await createPythonBackend(
+      SOURCE_REPO_ROOT,
+      `Hermes source at ${SOURCE_REPO_ROOT}`,
+      backendArgs,
+      { fallbackVenvRoot: VENV_ROOT }
+    )
 
     if (backend) {
       return backend

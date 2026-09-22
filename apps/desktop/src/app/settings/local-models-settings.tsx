@@ -523,11 +523,13 @@ export function LocalModelsSettings() {
       <SettingsSection icon={Monitor} title={copy.hardwareTitle}>
         {hardware ? (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1 py-1 text-[length:var(--conversation-caption-font-size)] text-muted-foreground">
-            {hardware.gpu_name && (
-              <span className="inline-flex items-center gap-1.5">
-                <Zap className="size-3.5" />
-                {hardware.gpu_name}
-              </span>
+            {(hardware.gpus?.length ? hardware.gpus : hardware.gpu_name ? [{ name: hardware.gpu_name }] : []).map(
+              (gpu, index) => (
+                <span className="inline-flex items-center gap-1.5" key={`${gpu.name}-${index}`}>
+                  <Zap className="size-3.5" />
+                  {gpu.name}
+                </span>
+              )
             )}
 
             <span className="inline-flex items-center gap-1.5">

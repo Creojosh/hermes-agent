@@ -143,7 +143,12 @@ def _nvidia_smi_path() -> str | None:
 
 
 def _nvidia_vram() -> tuple[int, int] | None:
-    """(total, free) MiB->bytes from nvidia-smi, or None."""
+    """Aggregate ``(total, free)`` bytes for every visible NVIDIA GPU.
+
+    llama.cpp distributes model layers across the visible CUDA devices by
+    default, so pricing the machine from GPU 0 alone rejects models that fit
+    across the actual device pool.
+    """
     exe = _nvidia_smi_path()
     if exe is None:
         return None
@@ -154,16 +159,22 @@ def _nvidia_vram() -> tuple[int, int] | None:
             capture_output=True, text=True, timeout=10)
         if out.returncode != 0 or not out.stdout.strip():
             return None
-        total_mib, free_mib = (int(x) for x in out.stdout.strip().splitlines()[0].split(","))
-        return total_mib << 20, free_mib << 20
+        devices = [tuple(int(x.strip()) for x in line.split(","))
+                   for line in out.stdout.splitlines() if line.strip()]
+        if not devices or any(len(device) != 2 for device in devices):
+            return None
+        return (sum(device[0] for device in devices) << 20,
+                sum(device[1] for device in devices) << 20)
     return None
 
 
 def _cuda_driver_pool() -> "tuple[int, bool | None] | None":
-    """(allocator_total_bytes, integrated_or_None) from the CUDA driver API via ctypes against the
-    driver's own DLL/SO — no toolkit, no subprocess, ~ms. INTEGRATED is the vendor's own
-    unified-memory declaration; total is the pool the allocator will actually hand out (on
-    carve-out devices, several times what nvidia-smi reports)."""
+    """Aggregate allocator bytes and unified-memory verdict for all CUDA devices.
+
+    The driver API needs no toolkit or subprocess. ``integrated`` is true only
+    when every visible device reports unified memory; a mixed device set stays
+    on the discrete multi-GPU budget path.
+    """
     import ctypes
 
     for name in ("nvcuda.dll", "libcuda.so.1", "libcuda.so"):
@@ -177,19 +188,27 @@ def _cuda_driver_pool() -> "tuple[int, bool | None] | None":
     with suppress(OSError, AttributeError):
         if cuda.cuInit(0) != 0:
             return None
-        dev = ctypes.c_int()
-        if cuda.cuDeviceGet(ctypes.byref(dev), 0) != 0:
+        count = ctypes.c_int()
+        if cuda.cuDeviceGetCount(ctypes.byref(count)) != 0 or count.value <= 0:
             return None
-        total = ctypes.c_size_t()
         getter = getattr(cuda, "cuDeviceTotalMem_v2", None) or cuda.cuDeviceTotalMem
-        if getter(ctypes.byref(total), dev) != 0 or total.value <= 0:
-            return None
-        integrated: bool | None = None
-        attr = ctypes.c_int()
-        if cuda.cuDeviceGetAttribute(
-                ctypes.byref(attr), _CU_DEVICE_ATTRIBUTE_INTEGRATED, dev) == 0:
-            integrated = bool(attr.value)
-        return total.value, integrated
+        totals: list[int] = []
+        integrated_values: list[bool] = []
+        for ordinal in range(count.value):
+            dev = ctypes.c_int()
+            if cuda.cuDeviceGet(ctypes.byref(dev), ordinal) != 0:
+                return None
+            total = ctypes.c_size_t()
+            if getter(ctypes.byref(total), dev) != 0 or total.value <= 0:
+                return None
+            totals.append(total.value)
+            attr = ctypes.c_int()
+            if cuda.cuDeviceGetAttribute(
+                    ctypes.byref(attr), _CU_DEVICE_ATTRIBUTE_INTEGRATED, dev) == 0:
+                integrated_values.append(bool(attr.value))
+        integrated = (all(integrated_values)
+                      if len(integrated_values) == count.value else None)
+        return sum(totals), integrated
     return None
 
 
@@ -211,10 +230,11 @@ def _engine_device_pool() -> "tuple[int, bool | None] | None":
                              text=True, timeout=30, cwd=str(exe.parent))
         if out.returncode != 0:
             return None
-        for line in (out.stdout + out.stderr).splitlines():
-            m = _DEVICE_LINE_RE.search(line)
-            if m:
-                return int(m.group(1)) << 20, None
+        totals = [int(m.group(1)) << 20
+                  for line in (out.stdout + out.stderr).splitlines()
+                  if (m := _DEVICE_LINE_RE.search(line))]
+        if totals:
+            return sum(totals), None
     return None
 
 
